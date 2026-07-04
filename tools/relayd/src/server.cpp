@@ -27,6 +27,11 @@ struct Server::Impl {
     std::unique_ptr<roqr::quic::QuicContext> quic;
     picoquic_network_thread_ctx_t* thread_ctx = nullptr;
     int thread_ret = 0;
+    // Must outlive the network thread: picoquic_packet_loop_v3 keeps a
+    // pointer to this (thread_ctx->param) and both reads and writes it
+    // (e.g. send_length_max) for the thread's entire lifetime, so it
+    // cannot be a stack-local in start().
+    picoquic_packet_loop_param_t loop_param{};
     std::mutex mutex;
     bool running = false;
 
@@ -126,12 +131,12 @@ bool Server::start(const ServerOptions& options) {
         &Impl::connection_callback, impl_.get());
     if (!impl_->quic) return false;
 
-    picoquic_packet_loop_param_t param{};
-    param.local_port = options.port;
-    param.local_af = AF_INET;
+    impl_->loop_param = picoquic_packet_loop_param_t{};
+    impl_->loop_param.local_port = options.port;
+    impl_->loop_param.local_af = AF_INET;
     impl_->thread_ctx = picoquic_start_network_thread(
-        impl_->quic->get(), &param, &Impl::loop_callback, impl_.get(),
-        &impl_->thread_ret);
+        impl_->quic->get(), &impl_->loop_param, &Impl::loop_callback,
+        impl_.get(), &impl_->thread_ret);
     if (impl_->thread_ctx == nullptr) {
         impl_->quic.reset();
         return false;

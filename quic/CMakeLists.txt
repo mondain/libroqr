@@ -1,4 +1,5 @@
 add_library(roqr-quic STATIC
+  src/client.cpp
   src/context.cpp
   src/delivery.cpp
 )

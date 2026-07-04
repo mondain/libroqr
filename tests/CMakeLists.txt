@@ -45,6 +45,7 @@ if(ROQR_BUILD_QUIC)
 
     add_executable(roqr-integration-tests
       integration/server_lifecycle_test.cpp
+      integration/client_connect_test.cpp
     )
     add_dependencies(roqr-integration-tests roqr-testcerts)
     target_compile_definitions(roqr-integration-tests PRIVATE
