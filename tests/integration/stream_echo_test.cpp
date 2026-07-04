@@ -77,3 +77,21 @@ TEST_CASE("send fails before connect") {
     CHECK_FALSE(client.send(video_frame(1, {0x01}),
                             roqr::quic::DeliveryMode::Stream));
 }
+
+TEST_CASE("send fails after close is requested") {
+    roqr::relayd::Server server;
+    roqr::relayd::ServerOptions so;
+    so.port = 45562;
+    so.cert_file = kCertDir + "/cert.pem";
+    so.key_file = kCertDir + "/key.pem";
+    REQUIRE(server.start(so));
+
+    roqr::quic::Client client;
+    REQUIRE(client.connect("127.0.0.1", 45562));
+    REQUIRE(client.wait_connected(5s));
+    client.close();
+    CHECK_FALSE(client.send(video_frame(1, {0x01}),
+                            roqr::quic::DeliveryMode::Stream));
+    client.wait_closed(5s);
+    server.stop();
+}

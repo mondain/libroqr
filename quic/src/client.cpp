@@ -245,7 +245,7 @@ bool Client::wait_connected(std::chrono::milliseconds timeout) {
 bool Client::send(roqr::Frame frame, DeliveryMode mode) {
     {
         std::lock_guard lock(impl_->mutex);
-        if (!impl_->started || impl_->closed) return false;
+        if (!impl_->started || impl_->closed || impl_->close_requested) return false;
     }
     if (frame.payload.empty()) return false;
     impl_->outbound.push({std::move(frame), mode});
