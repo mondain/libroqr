@@ -44,6 +44,45 @@ struct Client::Impl {
     roqr::FlowTable flows;
     std::map<uint64_t, roqr::FrameDecoder> decoders;  // by stream id
 
+    // Network-thread-only: flow id -> bidi stream id for sending.
+    std::map<uint64_t, uint64_t> flow_streams;
+    bool started = false;  // set once connect() succeeds
+
+    uint64_t stream_for_flow(uint64_t flow_id) {
+        auto it = flow_streams.find(flow_id);
+        if (it != flow_streams.end()) return it->second;
+        uint64_t id;
+        if (flow_id == 0) {
+            id = 0;  // first client-initiated bidi stream
+        } else {
+            id = picoquic_get_next_local_stream_id(cnx, 0);
+        }
+        flow_streams[flow_id] = id;
+        return id;
+    }
+
+    void deliver(const roqr::Frame& frame) {
+        if (message_handler) message_handler(frame);
+    }
+
+    void fail_connection(roqr::ErrorCode code) {
+        if (cnx != nullptr) {
+            picoquic_close(cnx, static_cast<uint64_t>(code));
+        }
+    }
+
+    void on_stream_data(uint64_t stream_id, const uint8_t* bytes,
+                        size_t length) {
+        auto& decoder = decoders.try_emplace(stream_id).first->second;
+        decoder.feed(std::span<const uint8_t>(bytes, length));
+        while (auto frame = decoder.next()) {
+            deliver(*frame);  // Task 7 adds FlowTable gating here
+        }
+        if (decoder.malformed()) {
+            fail_connection(roqr::ErrorCode::FrameEncodingError);
+        }
+    }
+
     void wake() {
         if (thread_ctx != nullptr) {
             picoquic_wake_up_network_thread(thread_ctx);
@@ -90,13 +129,21 @@ void Client::Impl::service() {
     }
     if (do_close && cnx != nullptr) {
         picoquic_close(cnx, code);
+        return;
     }
-    // Tasks 5-6 drain `outbound` here.
+    while (auto item = outbound.pop()) {
+        std::vector<uint8_t> wire;
+        if (!roqr::frame_encode(item->frame, wire)) continue;
+        // Task 6 consults resolve_delivery here; for now everything is
+        // stream-carried.
+        const uint64_t stream_id = stream_for_flow(item->frame.flow_id);
+        picoquic_add_to_stream(cnx, stream_id, wire.data(), wire.size(), 0);
+    }
 }
 
 int Client::Impl::connection_callback(picoquic_cnx_t* /*cnx*/,
-                                      uint64_t /*stream_id*/,
-                                      uint8_t* /*bytes*/, size_t /*length*/,
+                                      uint64_t stream_id, uint8_t* bytes,
+                                      size_t length,
                                       picoquic_call_back_event_t event,
                                       void* callback_ctx,
                                       void* /*stream_ctx*/) {
@@ -111,8 +158,12 @@ int Client::Impl::connection_callback(picoquic_cnx_t* /*cnx*/,
         case picoquic_callback_application_close:
             impl->signal_closed(picoquic_get_application_error(impl->cnx));
             break;
+        case picoquic_callback_stream_data:
+        case picoquic_callback_stream_fin:
+            impl->on_stream_data(stream_id, bytes, length);
+            break;
         default:
-            break;  // stream/datagram events arrive in Tasks 5-6
+            break;  // datagram events arrive in Task 6
     }
     return 0;
 }
@@ -177,7 +228,12 @@ bool Client::connect(const std::string& host, uint16_t port,
     impl_->thread_ctx = picoquic_start_network_thread(
         impl_->quic->get(), &impl_->loop_param, &Impl::loop_callback,
         impl_.get(), &impl_->thread_ret);
-    return impl_->thread_ctx != nullptr;
+    if (impl_->thread_ctx == nullptr) return false;
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->started = true;
+    }
+    return true;
 }
 
 bool Client::wait_connected(std::chrono::milliseconds timeout) {
@@ -186,8 +242,15 @@ bool Client::wait_connected(std::chrono::milliseconds timeout) {
                               [&] { return impl_->connected; });
 }
 
-bool Client::send(roqr::Frame /*frame*/, DeliveryMode /*mode*/) {
-    return false;  // Task 5 implements the stream path, Task 6 datagrams.
+bool Client::send(roqr::Frame frame, DeliveryMode mode) {
+    {
+        std::lock_guard lock(impl_->mutex);
+        if (!impl_->started || impl_->closed) return false;
+    }
+    if (frame.payload.empty()) return false;
+    impl_->outbound.push({std::move(frame), mode});
+    impl_->wake();
+    return true;
 }
 
 void Client::bind_flow(uint64_t flow_id) {
