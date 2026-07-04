@@ -97,3 +97,77 @@ TEST_CASE("datagram_decode rejects zero payload length") {
     Frame out;
     CHECK(datagram_decode(wire, out) == DecodeStatus::Malformed);
 }
+
+TEST_CASE("FrameDecoder decodes a whole frame fed at once") {
+    std::vector<uint8_t> wire;
+    REQUIRE(frame_encode(sample_video_frame(), wire));
+
+    FrameDecoder dec;
+    dec.feed(wire);
+    auto f = dec.next();
+    REQUIRE(f.has_value());
+    CHECK(*f == sample_video_frame());
+    CHECK_FALSE(dec.next().has_value());
+    CHECK_FALSE(dec.malformed());
+}
+
+TEST_CASE("FrameDecoder handles every split point") {
+    std::vector<uint8_t> wire;
+    REQUIRE(frame_encode(sample_video_frame(), wire));
+
+    for (size_t split = 1; split < wire.size(); ++split) {
+        FrameDecoder dec;
+        dec.feed(std::span<const uint8_t>(wire.data(), split));
+        CHECK_FALSE(dec.next().has_value());
+        dec.feed(std::span<const uint8_t>(wire.data() + split,
+                                          wire.size() - split));
+        auto f = dec.next();
+        REQUIRE(f.has_value());
+        CHECK(*f == sample_video_frame());
+    }
+}
+
+TEST_CASE("FrameDecoder decodes back-to-back frames in order") {
+    Frame a = sample_video_frame();
+    Frame b = sample_video_frame();
+    b.timestamp = 2000;
+    b.payload = {0x01, 0x02, 0x03};
+
+    std::vector<uint8_t> wire;
+    REQUIRE(frame_encode(a, wire));
+    REQUIRE(frame_encode(b, wire));
+
+    FrameDecoder dec;
+    dec.feed(wire);
+    auto f1 = dec.next();
+    auto f2 = dec.next();
+    REQUIRE(f1.has_value());
+    REQUIRE(f2.has_value());
+    CHECK(*f1 == a);
+    CHECK(*f2 == b);
+    CHECK_FALSE(dec.next().has_value());
+}
+
+TEST_CASE("FrameDecoder marks zero payload length malformed") {
+    const uint8_t wire[] = {0x00, 0x00, 0x09, 0x01, 0x04, 0x00};
+    FrameDecoder dec;
+    dec.feed(wire);
+    CHECK(dec.malformed());
+    CHECK_FALSE(dec.next().has_value());
+}
+
+TEST_CASE("FrameDecoder enforces the payload cap and latches") {
+    Frame f = sample_video_frame();
+    f.payload.assign(64, 0xAB);
+    std::vector<uint8_t> wire;
+    REQUIRE(frame_encode(f, wire));
+
+    FrameDecoder dec(/*max_payload=*/32);
+    dec.feed(wire);
+    CHECK(dec.malformed());
+    CHECK_FALSE(dec.next().has_value());
+
+    // Further input is ignored once malformed.
+    dec.feed(wire);
+    CHECK_FALSE(dec.next().has_value());
+}

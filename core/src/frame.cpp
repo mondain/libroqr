@@ -88,14 +88,39 @@ DecodeStatus datagram_decode(std::span<const uint8_t> data, Frame& out) {
 FrameDecoder::FrameDecoder(uint64_t max_payload) : max_payload_(max_payload) {}
 
 void FrameDecoder::feed(std::span<const uint8_t> data) {
-    // Implemented in Task 6.
-    (void)data;
+    if (malformed_) return;
+    buffer_.insert(buffer_.end(), data.begin(), data.end());
+    parse();
 }
 
 std::optional<Frame> FrameDecoder::next() {
-    return std::nullopt;
+    if (ready_.empty()) return std::nullopt;
+    Frame f = std::move(ready_.front());
+    ready_.pop_front();
+    return f;
 }
 
-void FrameDecoder::parse() {}
+void FrameDecoder::parse() {
+    for (;;) {
+        Header h;
+        if (parse_header(buffer_, h) != DecodeStatus::Ok) return;
+        if (h.payload_length == 0 || h.payload_length > max_payload_) {
+            malformed_ = true;
+            buffer_.clear();
+            return;
+        }
+        if (buffer_.size() - h.consumed < h.payload_length) return;
+
+        Frame f;
+        header_to_frame(h, f);
+        const auto payload_begin =
+            buffer_.begin() + static_cast<ptrdiff_t>(h.consumed);
+        const auto payload_end =
+            payload_begin + static_cast<ptrdiff_t>(h.payload_length);
+        f.payload.assign(payload_begin, payload_end);
+        ready_.push_back(std::move(f));
+        buffer_.erase(buffer_.begin(), payload_end);
+    }
+}
 
 }  // namespace roqr
