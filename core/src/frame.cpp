@@ -12,6 +12,48 @@ bool append_varint(uint64_t value, std::vector<uint8_t>& out) {
     return true;
 }
 
+struct Header {
+    uint64_t flow_id = 0;
+    uint64_t timestamp = 0;
+    uint64_t message_stream_id = 0;
+    uint64_t chunk_stream_id = 0;
+    uint64_t payload_length = 0;
+    uint8_t message_type = 0;
+    size_t consumed = 0;
+};
+
+// Parses the fixed frame header. Returns NeedMoreData when data is too
+// short; a header by itself is never Malformed (any byte sequence is a
+// valid varint prefix).
+DecodeStatus parse_header(std::span<const uint8_t> data, Header& h) {
+    size_t off = 0;
+    auto take = [&](uint64_t& out) {
+        auto r = varint_decode(data.subspan(off));
+        if (!r) return false;
+        out = r->value;
+        off += r->consumed;
+        return true;
+    };
+
+    if (!take(h.flow_id) || !take(h.timestamp)) return DecodeStatus::NeedMoreData;
+    if (off >= data.size()) return DecodeStatus::NeedMoreData;
+    h.message_type = data[off++];
+    if (!take(h.message_stream_id) || !take(h.chunk_stream_id) ||
+        !take(h.payload_length)) {
+        return DecodeStatus::NeedMoreData;
+    }
+    h.consumed = off;
+    return DecodeStatus::Ok;
+}
+
+void header_to_frame(const Header& h, Frame& f) {
+    f.flow_id = h.flow_id;
+    f.timestamp = h.timestamp;
+    f.message_type = h.message_type;
+    f.message_stream_id = h.message_stream_id;
+    f.chunk_stream_id = h.chunk_stream_id;
+}
+
 }  // namespace
 
 bool frame_encode(const Frame& frame, std::vector<uint8_t>& out) {
@@ -33,10 +75,14 @@ bool frame_encode(const Frame& frame, std::vector<uint8_t>& out) {
 }
 
 DecodeStatus datagram_decode(std::span<const uint8_t> data, Frame& out) {
-    // Implemented in the next task.
-    (void)data;
-    (void)out;
-    return DecodeStatus::Malformed;
+    Header h;
+    if (parse_header(data, h) != DecodeStatus::Ok) return DecodeStatus::Malformed;
+    if (h.payload_length == 0) return DecodeStatus::Malformed;
+    if (data.size() - h.consumed != h.payload_length) return DecodeStatus::Malformed;
+
+    header_to_frame(h, out);
+    out.payload.assign(data.begin() + h.consumed, data.end());
+    return DecodeStatus::Ok;
 }
 
 FrameDecoder::FrameDecoder(uint64_t max_payload) : max_payload_(max_payload) {}

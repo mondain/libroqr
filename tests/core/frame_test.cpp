@@ -59,3 +59,41 @@ TEST_CASE("frame_encode rejects varint fields out of range") {
     CHECK_FALSE(frame_encode(f, out));
     CHECK(out.empty());
 }
+
+TEST_CASE("datagram_decode round-trips an encoded frame") {
+    const Frame f = sample_video_frame();
+    std::vector<uint8_t> wire;
+    REQUIRE(frame_encode(f, wire));
+
+    Frame out;
+    REQUIRE(datagram_decode(wire, out) == DecodeStatus::Ok);
+    CHECK(out == f);
+}
+
+TEST_CASE("datagram_decode rejects trailing bytes") {
+    std::vector<uint8_t> wire;
+    REQUIRE(frame_encode(sample_video_frame(), wire));
+    wire.push_back(0x00);
+
+    Frame out;
+    CHECK(datagram_decode(wire, out) == DecodeStatus::Malformed);
+}
+
+TEST_CASE("datagram_decode rejects truncated input") {
+    std::vector<uint8_t> wire;
+    REQUIRE(frame_encode(sample_video_frame(), wire));
+
+    Frame out;
+    for (size_t len = 0; len < wire.size(); ++len) {
+        CHECK(datagram_decode(std::span<const uint8_t>(wire.data(), len),
+                              out) == DecodeStatus::Malformed);
+    }
+}
+
+TEST_CASE("datagram_decode rejects zero payload length") {
+    // flow 0, timestamp 0, type 9, msg stream 1, chunk stream 4,
+    // payload length 0.
+    const uint8_t wire[] = {0x00, 0x00, 0x09, 0x01, 0x04, 0x00};
+    Frame out;
+    CHECK(datagram_decode(wire, out) == DecodeStatus::Malformed);
+}
