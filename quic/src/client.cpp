@@ -41,6 +41,9 @@ struct Client::Impl {
     bool close_requested = false;
     uint64_t requested_close_code = 0;
 
+    // App -> network thread flow requests, drained in service().
+    std::vector<std::pair<uint64_t, bool>> flow_requests;  // (id, activate)
+
     // Network-thread-only state (Tasks 5-7 fill these in).
     roqr::FlowTable flows;
     std::map<uint64_t, roqr::FrameDecoder> decoders;  // by stream id
@@ -78,6 +81,26 @@ struct Client::Impl {
         if (message_handler) message_handler(frame);
     }
 
+    void gate_and_deliver(roqr::Frame frame, bool from_stream) {
+        switch (flows.state(frame.flow_id)) {
+            case roqr::FlowState::Active:
+                deliver(frame);
+                break;
+            case roqr::FlowState::Retired:
+                break;  // dropped
+            case roqr::FlowState::Unknown:
+                if (flows.buffer_unknown(std::move(frame)) ==
+                    roqr::FlowTable::BufferResult::LimitExceeded) {
+                    if (from_stream) {
+                        // Bounded buffering exhausted (draft s5).
+                        fail_connection(roqr::ErrorCode::UnknownFlowId);
+                    }
+                    // Datagram overflow: drop silently.
+                }
+                break;
+        }
+    }
+
     void fail_connection(roqr::ErrorCode code) {
         if (cnx != nullptr) {
             picoquic_close(cnx, static_cast<uint64_t>(code));
@@ -89,7 +112,7 @@ struct Client::Impl {
         auto& decoder = decoders.try_emplace(stream_id).first->second;
         decoder.feed(std::span<const uint8_t>(bytes, length));
         while (auto frame = decoder.next()) {
-            deliver(*frame);  // Task 7 adds FlowTable gating here
+            gate_and_deliver(std::move(*frame), /*from_stream=*/true);
         }
         if (decoder.malformed()) {
             fail_connection(roqr::ErrorCode::FrameEncodingError);
@@ -145,6 +168,22 @@ void Client::Impl::service() {
             close_performed = true;
         }
         return;
+    }
+    std::vector<std::pair<uint64_t, bool>> requests;
+    {
+        std::lock_guard lock(mutex);
+        requests.swap(flow_requests);
+    }
+    for (auto [flow_id, activate] : requests) {
+        if (activate) {
+            if (flows.activate(flow_id)) {
+                for (auto& frame : flows.take_buffered(flow_id)) {
+                    deliver(frame);
+                }
+            }
+        } else {
+            flows.retire(flow_id);
+        }
     }
     while (auto item = outbound.pop()) {
         std::vector<uint8_t> wire;
@@ -210,7 +249,8 @@ int Client::Impl::connection_callback(picoquic_cnx_t* /*cnx*/,
             roqr::Frame frame;
             if (roqr::datagram_decode(std::span<const uint8_t>(bytes, length),
                                       frame) == roqr::DecodeStatus::Ok) {
-                impl->deliver(frame);
+                impl->gate_and_deliver(std::move(frame),
+                                       /*from_stream=*/false);
             }
             break;  // malformed datagrams dropped silently (draft s12)
         }
@@ -326,13 +366,19 @@ bool Client::send(roqr::Frame frame, DeliveryMode mode) {
 }
 
 void Client::bind_flow(uint64_t flow_id) {
-    std::lock_guard lock(impl_->mutex);
-    impl_->flows.activate(flow_id);  // full wiring in Task 7
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->flow_requests.emplace_back(flow_id, true);
+    }
+    impl_->wake();
 }
 
 void Client::retire_flow(uint64_t flow_id) {
-    std::lock_guard lock(impl_->mutex);
-    impl_->flows.retire(flow_id);
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->flow_requests.emplace_back(flow_id, false);
+    }
+    impl_->wake();
 }
 
 void Client::reset_flow_stream(uint64_t /*flow_id*/) {

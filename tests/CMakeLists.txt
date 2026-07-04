@@ -48,6 +48,7 @@ if(ROQR_BUILD_QUIC)
       integration/client_connect_test.cpp
       integration/stream_echo_test.cpp
       integration/datagram_test.cpp
+      integration/flow_gating_test.cpp
     )
     add_dependencies(roqr-integration-tests roqr-testcerts)
     target_compile_definitions(roqr-integration-tests PRIVATE
