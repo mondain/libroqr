@@ -1,4 +1,5 @@
 add_library(roqr-core STATIC
+  src/varint.cpp
   src/version.cpp
 )
 
