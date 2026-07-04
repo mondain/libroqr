@@ -8,7 +8,9 @@
 
 **Tech Stack:** C++20, CMake >= 3.24 with presets, Catch2 v3.7.1 (FetchContent), CTest.
 
-**Spec:** `docs/superpowers/specs/2026-07-04-libroqr-design.md`. Draft: `../roqr/draft-gregoire-rtmp-over-quic.txt` (section references below are to this draft).
+**Spec:** `docs/superpowers/specs/2026-07-04-libroqr-design.md`. Draft: `../roqr/draft-gregoire-rtmp-over-quic.txt` (section references below are to this draft). E-RTMP references: `docs/reference/enhanced-rtmp-v1.md`, `docs/reference/enhanced-rtmp-v2.md`.
+
+**E-RTMP note:** the spec requires Enhanced RTMP (Veovera v1/v2) support in the gateway media classifier. Nothing in this plan touches it — `roqr-core` treats RTMP payloads as opaque bytes by design — so E-RTMP work lands in Plan 3 (classifier) and Plan 4 (HEVC e2e case); see Follow-On Plans.
 
 ## Global Constraints
 
@@ -1446,6 +1448,6 @@ git commit -m "Add bounded unknown-flow buffering"
 ## Follow-On Plans (not in this document)
 
 1. Plan 2: `roqr-quic` picoquic client transport plus `tools/roqr-relayd`, loopback integration tests.
-2. Plan 3: `roqr-rtmp` handshake, chunking, AMF0.
-3. Plan 4: gateway examples (`roqr-ingest`, `roqr-egress`, `roqr-duplex`), relayd command handling, ffmpeg end-to-end script, GitHub Actions CI.
+2. Plan 3: `roqr-rtmp` handshake, chunking, AMF0, and the E-RTMP-aware media classifier (legacy FLV tag headers plus Enhanced RTMP v1/v2 ex-headers: IsExHeader bit, VideoPacketType/AudioPacketType incl. ModEx skip and Multitrack, FourCC extraction) with unit vectors per the spec.
+3. Plan 4: gateway examples (`roqr-ingest`, `roqr-egress`, `roqr-duplex`), relayd command handling, ffmpeg end-to-end script including the E-RTMP HEVC case (auto-skipped without enhanced-FLV ffmpeg), GitHub Actions CI.
 4. Plan 5: C FFI (`roqr.h`, `roqr_rtmp.h`), JNI bindings and Java samples.

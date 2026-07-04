@@ -36,6 +36,9 @@ relay so everything runs standalone.
 - Validation: real ffmpeg processes drive end-to-end tests; unit tests cover
   the codecs.
 - Test server included: `tools/roqr-relayd`, a minimal RoQR relay.
+- E-RTMP (Veovera Enhanced RTMP v1/v2) is supported at the gateway
+  classification level. Reference copies live in `docs/reference/`
+  (`enhanced-rtmp-v1.md`, `enhanced-rtmp-v2.md`).
 
 ## Repository Layout
 
@@ -109,6 +112,19 @@ FetchContent. Android TLS uses the existing openssl-android builds.
 - `ServerSession`: TCP accept, handshake, connect/createStream/publish/play
   command handling, yields complete de-chunked RTMP messages. POSIX TCP,
   thread per connection; gateway-grade, not a general server framework.
+- Media classifier (E-RTMP aware): inspects audio/video message headers to
+  classify each message for delivery-mode and gap-recovery decisions.
+  Handles legacy FLV tag headers (codec id nibble, AVC/AAC sequence
+  headers, keyframe flag) and Enhanced RTMP v1/v2 ex-headers: the IsExHeader
+  bit, VideoPacketType (SequenceStart, CodedFrames, SequenceEnd,
+  CodedFramesX, Metadata, MPEG2TSSequenceStart, Multitrack, ModEx),
+  AudioPacketType (SequenceStart, CodedFrames, SequenceEnd,
+  MultichannelConfig, Multitrack, ModEx), and video/audio FourCC. ModEx
+  blocks are skipped to reach the effective packet type; payload bytes are
+  never modified. Classification output: {sequence-header | metadata |
+  keyframe | coded | control} plus fourcc/codec id. E-RTMP `connect`
+  capability objects (capsEx, fourCcList, videoFourCcInfoMap) pass through
+  the gateway untouched.
 
 ### FFI (`roqr` shared library)
 
@@ -147,8 +163,14 @@ Publish: ffmpeg -> `rtmp://ingest:1935/live/<name>`. ServerSession handshakes
 and dechunks. Commands travel as RoQR frames on Flow 0's bidirectional
 stream; payload bytes are untouched, metadata is lifted into the frame
 header. Responses from the server are re-chunked back to ffmpeg. After
-publish is accepted: sequence headers (AVC/AAC config, onMetaData) always on
-stream; subsequent media per configured mode (Auto default).
+publish is accepted: sequence headers (legacy AVC/AAC config or E-RTMP
+SequenceStart/MultichannelConfig), onMetaData, and E-RTMP
+VideoPacketType.Metadata always go on stream; SequenceEnd on stream;
+CodedFrames/CodedFramesX and legacy coded frames follow the configured mode
+(Auto default). Multitrack messages are classified conservatively: if any
+track in the message is a sequence header or metadata, the whole message
+goes on stream. Gap-recovery keyframe detection understands both legacy
+frame-type nibbles and E-RTMP ex-headers.
 
 Subscribe: roqr-egress connects, issues connect/createStream/play on Flow 0,
 receives media frames, re-chunks, serves ffplay. RoQR frames carry no
@@ -182,13 +204,18 @@ Unit (Catch2 v3 via CTest):
   extended timestamps (>= 0xFFFFFF).
 - AMF0 round-trip against byte vectors captured from ffmpeg output.
 - flow-table limit enforcement.
+- media classifier vectors: legacy AVC/AAC tags and E-RTMP v1/v2 ex-headers
+  (hvc1/av01/vp09 video, ac-3/opus/flac audio, ModEx-prefixed packets,
+  multitrack messages), asserting classification and fourcc extraction.
 
 Integration:
 - In-process loopback client <-> relayd: publish/play, both delivery modes,
   simulated datagram loss, error-code paths.
 - End-to-end script: ffmpeg lavfi testsrc+sine -> ingest -> relayd ->
   egress -> ffmpeg remux to file; assert stream-copy integrity (packet
-  counts, codec parameters, H.264 bitstream hash).
+  counts, codec parameters, H.264 bitstream hash). A second, E-RTMP case
+  publishes HEVC over enhanced RTMP (skipped automatically when the
+  installed ffmpeg lacks enhanced-FLV support).
 
 CI (GitHub Actions): gcc/clang build matrix; unit plus loopback always;
 ffmpeg e2e on ubuntu runner. Manual interop target: point examples at a
@@ -201,5 +228,9 @@ Red5 Pro RoQR server.
   handshake ships, a push example does not).
 - AMF3, shared object semantics, aggregate message unpacking (payloads pass
   through opaquely).
+- E-RTMP multitrack fan-out to separate RoQR Flow IDs (multitrack messages
+  are classified and relayed whole); interpretation of ModEx
+  TimestampOffsetNano beyond skipping it during classification; the v2
+  reconnect-request flow.
 - 0-RTT support, connection migration handling beyond picoquic defaults.
 - Encoder rate adaptation; the library exposes transport signals only.
