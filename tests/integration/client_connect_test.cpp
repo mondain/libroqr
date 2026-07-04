@@ -51,3 +51,21 @@ TEST_CASE("connect refuses a second call on the same client") {
     client.wait_closed(5s);
     server.stop();
 }
+
+TEST_CASE("destroying a connected client without close is safe") {
+    roqr::relayd::Server server;
+    REQUIRE(server.start(server_opts(45564)));
+    {
+        roqr::quic::Client client;
+        REQUIRE(client.connect("127.0.0.1", 45564));
+        REQUIRE(client.wait_connected(5s));
+        // no close(): destructor must tear down safely
+    }
+    server.stop();
+}
+
+TEST_CASE("destroying a client mid-handshake is safe") {
+    roqr::quic::Client client;
+    REQUIRE(client.connect("127.0.0.1", 45565));  // nothing listening
+    // destructor runs while the handshake is still failing
+}

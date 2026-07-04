@@ -13,3 +13,6 @@ target_compile_options(roqr-relayd-lib PRIVATE
 
 add_executable(roqr-relayd src/main.cpp)
 target_link_libraries(roqr-relayd PRIVATE roqr-relayd-lib)
+
+target_compile_options(roqr-relayd PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra>)

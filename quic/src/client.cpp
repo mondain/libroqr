@@ -111,7 +111,7 @@ struct Client::Impl {
     }
 
     void on_stream_data(uint64_t stream_id, const uint8_t* bytes,
-                        size_t length) {
+                        size_t length, bool fin) {
         auto& decoder = decoders.try_emplace(stream_id).first->second;
         decoder.feed(std::span<const uint8_t>(bytes, length));
         while (auto frame = decoder.next()) {
@@ -119,6 +119,12 @@ struct Client::Impl {
         }
         if (decoder.malformed()) {
             fail_connection(roqr::ErrorCode::FrameEncodingError);
+        }
+        if (fin) {
+            // Stream is done; drop its decoder so a future stream id reuse
+            // (or simple memory growth over a long session) doesn't retain
+            // stale per-stream state.
+            decoders.erase(stream_id);
         }
     }
 
@@ -207,23 +213,32 @@ void Client::Impl::service() {
         const ResolvedMode resolved = resolve_delivery(
             item->frame.message_type, item->mode, datagrams_ok, wire.size(),
             max_datagram, options.datagram_fallback);
+        auto send_on_stream = [&] {
+            const uint64_t stream_id = stream_for_flow(item->frame.flow_id);
+            picoquic_add_to_stream(cnx, stream_id, wire.data(), wire.size(),
+                                   0);
+        };
         switch (resolved) {
             case ResolvedMode::Datagram:
                 if (picoquic_queue_datagram_frame(cnx, wire.size(),
                                                   wire.data()) == 0) {
                     datagrams_sent.fetch_add(1, std::memory_order_relaxed);
+                } else if (item->mode == DeliveryMode::Auto ||
+                          options.datagram_fallback ==
+                              DatagramFallback::Stream) {
+                    // Queueing failed (e.g. peer's datagram budget momentarily
+                    // exhausted); honor fallback policy instead of silently
+                    // dropping when the caller asked for Stream fallback, and
+                    // always fall back for Auto (Auto never drops by policy).
+                    send_on_stream();
                 } else {
-                    // dropped-not-blocked semantics
+                    // Datagram mode with an explicit Drop fallback policy.
                     dropped_datagrams.fetch_add(1, std::memory_order_relaxed);
                 }
                 break;
-            case ResolvedMode::Stream: {
-                const uint64_t stream_id =
-                    stream_for_flow(item->frame.flow_id);
-                picoquic_add_to_stream(cnx, stream_id, wire.data(),
-                                       wire.size(), 0);
+            case ResolvedMode::Stream:
+                send_on_stream();
                 break;
-            }
             case ResolvedMode::Dropped:
                 dropped_datagrams.fetch_add(1, std::memory_order_relaxed);
                 break;
@@ -258,9 +273,17 @@ int Client::Impl::connection_callback(picoquic_cnx_t* /*cnx*/,
             impl->signal_closed(picoquic_get_application_error(impl->cnx));
             break;
         case picoquic_callback_stream_data:
-        case picoquic_callback_stream_fin:
-            impl->on_stream_data(stream_id, bytes, length);
+            impl->on_stream_data(stream_id, bytes, length, /*fin=*/false);
             break;
+        case picoquic_callback_stream_fin:
+            impl->on_stream_data(stream_id, bytes, length, /*fin=*/true);
+            break;
+        case picoquic_callback_stream_reset:
+        case picoquic_callback_stop_sending: {
+            auto it = impl->decoders.find(stream_id);
+            if (it != impl->decoders.end()) impl->decoders.erase(it);
+            break;
+        }
         case picoquic_callback_datagram: {
             roqr::Frame frame;
             if (roqr::datagram_decode(std::span<const uint8_t>(bytes, length),
@@ -299,6 +322,16 @@ Client::~Client() {
         picoquic_delete_network_thread(impl_->thread_ctx);
         impl_->thread_ctx = nullptr;
     }
+    // Impl::quic is declared before mutex/cv/closed_handler, so its dtor
+    // (picoquic_free -> picoquic_callback_close -> signal_closed) would
+    // otherwise run after those members are already destroyed if the cnx
+    // was not cleanly disconnected. Silence signal_closed first, then free
+    // the quic context explicitly while Impl is still fully alive.
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->closed = true;  // silence signal_closed during context teardown
+    }
+    impl_->quic.reset();  // free the quic context while Impl is fully alive
 }
 
 void Client::on_message(MessageHandler h) {
@@ -353,8 +386,9 @@ bool Client::connect(const std::string& host, uint16_t port,
 
 bool Client::wait_connected(std::chrono::milliseconds timeout) {
     std::unique_lock lock(impl_->mutex);
-    return impl_->cv.wait_for(lock, timeout,
-                              [&] { return impl_->connected; });
+    impl_->cv.wait_for(
+        lock, timeout, [&] { return impl_->connected || impl_->closed; });
+    return impl_->connected;
 }
 
 bool Client::datagrams_negotiated() const {

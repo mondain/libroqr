@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -78,4 +79,25 @@ TEST_CASE("reset_flow_stream cancels a flow stream without killing the connectio
 TEST_CASE("reset_flow_stream on a flow without a stream is a safe no-op") {
     roqr::quic::Client client;
     client.reset_flow_stream(99);  // must not crash before connect
+}
+
+TEST_CASE("on_closed fires with NO_ERROR on clean close") {
+    roqr::relayd::Server server;
+    roqr::relayd::ServerOptions so;
+    so.port = 45566;
+    so.cert_file = kCertDir + "/cert.pem";
+    so.key_file = kCertDir + "/key.pem";
+    REQUIRE(server.start(so));
+
+    std::atomic<uint64_t> code{999};
+    std::atomic<bool> fired{false};
+    roqr::quic::Client client;
+    client.on_closed([&](uint64_t c) { code = c; fired = true; });
+    REQUIRE(client.connect("127.0.0.1", 45566));
+    REQUIRE(client.wait_connected(5s));
+    client.close(roqr::ErrorCode::NoError);
+    REQUIRE(client.wait_closed(5s));
+    CHECK(fired.load());
+    CHECK(code.load() == 0);
+    server.stop();
 }

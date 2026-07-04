@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "roqr/quic/client.hpp"
@@ -65,6 +66,7 @@ TEST_CASE("frames for an unbound flow buffer until bind_flow") {
     REQUIRE(client.send(flow_frame(0, 2), roqr::quic::DeliveryMode::Stream));
     REQUIRE(got.wait_count(1, 5s));
     CHECK(got.frames[0].flow_id == 0);
+    std::this_thread::sleep_for(100ms);  // let a late flow-7 delivery arrive
     CHECK(got.count() == 1);  // flow 7 buffered, not delivered
 
     client.bind_flow(7);
@@ -100,6 +102,7 @@ TEST_CASE("frames for a retired flow are dropped") {
     REQUIRE(got.wait_count(1, 5s));
     // Only the flow 0 frame arrives; the retired flow 9 echo was dropped.
     CHECK(got.frames[0].flow_id == 0);
+    std::this_thread::sleep_for(100ms);  // let a late flow-9 delivery arrive
     CHECK(got.count() == 1);
 
     client.close();

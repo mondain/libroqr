@@ -1,7 +1,5 @@
 #include "roqr/quic/context.hpp"
 
-#include <picoquic_utils.h>
-
 namespace roqr::quic {
 
 std::unique_ptr<QuicContext> QuicContext::create_client(

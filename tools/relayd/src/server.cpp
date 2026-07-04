@@ -159,10 +159,12 @@ int Server::Impl::connection_callback(picoquic_cnx_t* cnx,
             impl->purge_relay_streams(cnx, stream_id);
             break;
         case picoquic_callback_stream_reset:
-        case picoquic_callback_stop_sending:
-            impl->conns[cnx].decoders.erase(stream_id);
+        case picoquic_callback_stop_sending: {
+            auto it = impl->conns.find(cnx);
+            if (it != impl->conns.end()) it->second.decoders.erase(stream_id);
             impl->purge_relay_streams(cnx, stream_id);
             break;
+        }
         case picoquic_callback_datagram: {
             roqr::Frame frame;
             if (roqr::datagram_decode(std::span<const uint8_t>(bytes, length),
