@@ -56,6 +56,7 @@ libroqr/
 ```
 
 C++ namespace `roqr::`, C symbol prefix `roqr_`, Java package `org.red5.roqr`.
+License: Apache-2.0.
 Toolchain: C++20, CMake >= 3.24 with presets, mirroring moq5 conventions.
 picoquic resolution order: installed config package, `-DROQR_PICOQUIC_SOURCE_DIR`,
 FetchContent. Android TLS uses the existing openssl-android builds.
