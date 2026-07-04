@@ -186,18 +186,151 @@ void amf0_encode(const Amf0Value& value, std::vector<uint8_t>& out) {
     }
 }
 
+namespace {
+
+constexpr int kMaxDepth = 32;
+
+struct Reader {
+    std::span<const uint8_t> data;
+    size_t pos = 0;
+
+    bool need(size_t n) const { return data.size() - pos >= n; }
+    uint8_t u8() { return data[pos++]; }
+    uint16_t u16() {
+        const uint16_t v = static_cast<uint16_t>(data[pos] << 8 | data[pos + 1]);
+        pos += 2;
+        return v;
+    }
+    uint32_t u32() {
+        const uint32_t v = static_cast<uint32_t>(data[pos]) << 24 |
+                           static_cast<uint32_t>(data[pos + 1]) << 16 |
+                           static_cast<uint32_t>(data[pos + 2]) << 8 |
+                           static_cast<uint32_t>(data[pos + 3]);
+        pos += 4;
+        return v;
+    }
+    double f64() {
+        uint64_t b = 0;
+        for (int i = 0; i < 8; ++i) b = b << 8 | data[pos + i];
+        pos += 8;
+        return std::bit_cast<double>(b);
+    }
+    bool str(size_t len, std::string& out) {
+        if (!need(len)) return false;
+        out.assign(reinterpret_cast<const char*>(data.data() + pos), len);
+        pos += len;
+        return true;
+    }
+};
+
+bool decode_value(Reader& r, Amf0Value& out, int depth);
+
+// Parses name/value pairs into out until the 0x0000/0x09 end marker.
+bool decode_properties(Reader& r, Amf0Value& out, int depth) {
+    for (;;) {
+        if (!r.need(2)) return false;
+        const uint16_t name_len = r.u16();
+        if (name_len == 0) {
+            if (!r.need(1)) return false;
+            return r.u8() == 0x09;
+        }
+        std::string name;
+        if (!r.str(name_len, name)) return false;
+        Amf0Value value;
+        if (!decode_value(r, value, depth)) return false;
+        out.set(std::move(name), std::move(value));
+    }
+}
+
+bool decode_value(Reader& r, Amf0Value& out, int depth) {
+    if (depth > kMaxDepth) return false;
+    if (!r.need(1)) return false;
+    const uint8_t marker = r.u8();
+    switch (marker) {
+        case kNumber:
+            if (!r.need(8)) return false;
+            out = Amf0Value::number(r.f64());
+            return true;
+        case kBoolean:
+            if (!r.need(1)) return false;
+            out = Amf0Value::boolean(r.u8() != 0);
+            return true;
+        case kString: {
+            if (!r.need(2)) return false;
+            const uint16_t len = r.u16();
+            std::string s;
+            if (!r.str(len, s)) return false;
+            out = Amf0Value::string(std::move(s));
+            return true;
+        }
+        case kLongString: {
+            if (!r.need(4)) return false;
+            const uint32_t len = r.u32();
+            std::string s;
+            if (!r.str(len, s)) return false;
+            out = Amf0Value::string(std::move(s));
+            return true;
+        }
+        case kObject:
+            out = Amf0Value::object();
+            return decode_properties(r, out, depth + 1);
+        case kEcmaArray:
+            // The count is advisory (ffmpeg writes approximations); the
+            // end marker is authoritative.
+            if (!r.need(4)) return false;
+            r.u32();
+            out = Amf0Value::ecma_array();
+            return decode_properties(r, out, depth + 1);
+        case kStrictArray: {
+            if (!r.need(4)) return false;
+            const uint32_t count = r.u32();
+            out = Amf0Value::strict_array();
+            for (uint32_t i = 0; i < count; ++i) {
+                Amf0Value v;
+                if (!decode_value(r, v, depth + 1)) return false;
+                out.push(std::move(v));
+            }
+            return true;
+        }
+        case kNull:
+            out = Amf0Value::null();
+            return true;
+        case kUndefined:
+            out = Amf0Value::undefined();
+            return true;
+        case kDate: {
+            if (!r.need(10)) return false;
+            const double ms = r.f64();
+            const auto tz = static_cast<int16_t>(r.u16());
+            out = Amf0Value::date(ms, tz);
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+}  // namespace
+
 std::optional<size_t> amf0_decode(std::span<const uint8_t> data,
                                   Amf0Value& out) {
-    // Implemented in the next task.
-    (void)data;
-    (void)out;
-    return std::nullopt;
+    Reader r{data};
+    if (!decode_value(r, out, 0)) return std::nullopt;
+    return r.pos;
 }
 
 std::optional<std::vector<Amf0Value>> amf0_decode_all(
     std::span<const uint8_t> data) {
-    (void)data;
-    return std::nullopt;
+    std::vector<Amf0Value> values;
+    size_t pos = 0;
+    while (pos < data.size()) {
+        Amf0Value v;
+        auto n = amf0_decode(data.subspan(pos), v);
+        if (!n) return std::nullopt;
+        pos += *n;
+        values.push_back(std::move(v));
+    }
+    return values;
 }
 
 }  // namespace roqr::rtmp

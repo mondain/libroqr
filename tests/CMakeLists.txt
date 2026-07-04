@@ -64,6 +64,7 @@ endif()
 if(ROQR_BUILD_RTMP)
   add_executable(roqr-rtmp-tests
     rtmp/amf0_encode_test.cpp
+    rtmp/amf0_decode_test.cpp
   )
   target_link_libraries(roqr-rtmp-tests PRIVATE roqr-rtmp Catch2::Catch2WithMain)
   catch_discover_tests(roqr-rtmp-tests PROPERTIES TIMEOUT 60)
