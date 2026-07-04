@@ -1,14 +1,15 @@
+#include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <semaphore>
+#include <thread>
 
 #include "roqr/relayd/server.hpp"
 
 namespace {
-std::binary_semaphore g_stop{0};
-void handle_signal(int) { g_stop.release(); }
+volatile std::sig_atomic_t g_stop = 0;
+void handle_signal(int) { g_stop = 1; }
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -46,7 +47,9 @@ int main(int argc, char** argv) {
     std::printf("roqr-relayd listening on port %u\n", opts.port);
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);
-    g_stop.acquire();
+    while (g_stop == 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
     server.stop();
     return 0;
 }

@@ -71,8 +71,15 @@ int Server::Impl::connection_callback(picoquic_cnx_t* cnx,
     auto* impl = static_cast<Impl*>(callback_ctx);
     switch (event) {
         case picoquic_callback_stream_data:
+            impl->echo_stream_frames(cnx, stream_id, bytes, length);
+            break;
         case picoquic_callback_stream_fin:
             impl->echo_stream_frames(cnx, stream_id, bytes, length);
+            impl->conns[cnx].decoders.erase(stream_id);
+            break;
+        case picoquic_callback_stream_reset:
+        case picoquic_callback_stop_sending:
+            impl->conns[cnx].decoders.erase(stream_id);
             break;
         case picoquic_callback_datagram: {
             roqr::Frame frame;
