@@ -1,4 +1,5 @@
 add_library(roqr-core STATIC
+  src/frame.cpp
   src/varint.cpp
   src/version.cpp
 )
