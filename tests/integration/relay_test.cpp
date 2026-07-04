@@ -73,3 +73,73 @@ TEST_CASE("relay forwards frames from publisher to subscriber") {
     subscriber.wait_closed(5s);
     server.stop();
 }
+
+TEST_CASE("relay purges stale stream mappings when a source connection churns") {
+    roqr::relayd::Server server;
+    roqr::relayd::ServerOptions so;
+    so.port = 45563;
+    so.cert_file = kCertDir + "/cert.pem";
+    so.key_file = kCertDir + "/key.pem";
+    so.mode = roqr::relayd::Mode::Relay;
+    REQUIRE(server.start(so));
+
+    Collector sub_got;
+    roqr::quic::Client subscriber;
+    subscriber.on_message([&](const roqr::Frame& f) { sub_got.add(f); });
+    REQUIRE(subscriber.connect("127.0.0.1", 45563));
+    REQUIRE(subscriber.wait_connected(5s));
+
+    {
+        roqr::quic::Client publisher;
+        REQUIRE(publisher.connect("127.0.0.1", 45563));
+        REQUIRE(publisher.wait_connected(5s));
+
+        roqr::Frame f1;
+        f1.flow_id = 0;
+        f1.timestamp = 42;
+        f1.message_type = 9;
+        f1.message_stream_id = 1;
+        f1.chunk_stream_id = 4;
+        f1.payload = {0xDE, 0xAD, 0xBE, 0xEF};
+        REQUIRE(publisher.send(f1, roqr::quic::DeliveryMode::Stream));
+
+        REQUIRE(sub_got.wait_count(1, 5s));
+        {
+            std::lock_guard lock(sub_got.mutex);
+            CHECK(sub_got.frames[0] == f1);
+        }
+
+        publisher.close();
+        publisher.wait_closed(5s);
+    }
+
+    // A new publisher connects after the old one closed. If the relay
+    // failed to purge stale (source cnx, stream id) mappings from the
+    // subscriber's relay_streams, a reused connection pointer + stream id
+    // could silently reuse the old destination stream instead of getting
+    // its own.
+    roqr::quic::Client publisher2;
+    REQUIRE(publisher2.connect("127.0.0.1", 45563));
+    REQUIRE(publisher2.wait_connected(5s));
+
+    roqr::Frame f2;
+    f2.flow_id = 0;
+    f2.timestamp = 99;
+    f2.message_type = 9;
+    f2.message_stream_id = 1;
+    f2.chunk_stream_id = 4;
+    f2.payload = {0xCA, 0xFE, 0xBA, 0xBE, 0x00};
+    REQUIRE(publisher2.send(f2, roqr::quic::DeliveryMode::Stream));
+
+    REQUIRE(sub_got.wait_count(2, 5s));
+    {
+        std::lock_guard lock(sub_got.mutex);
+        CHECK(sub_got.frames[1] == f2);
+    }
+
+    publisher2.close();
+    subscriber.close();
+    publisher2.wait_closed(5s);
+    subscriber.wait_closed(5s);
+    server.stop();
+}

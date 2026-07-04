@@ -4,6 +4,7 @@
 
 #include <map>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include <picoquic.h>
@@ -62,6 +63,14 @@ struct Server::Impl {
                        const roqr::Frame& frame, bool as_datagram);
     void handle_stream_frames(picoquic_cnx_t* cnx, uint64_t stream_id,
                               const uint8_t* bytes, size_t length);
+    // Relay only: erase stale relay_streams entries keyed by `source`.
+    // If stream_id is set, only the entry for that specific (source,
+    // stream_id) pair is erased from every destination's relay_streams
+    // (used when a single source stream ends). If stream_id is empty,
+    // every entry whose source-cnx component is `source` is erased from
+    // every destination (used when the whole source connection closes).
+    void purge_relay_streams(picoquic_cnx_t* source,
+                             std::optional<uint64_t> stream_id);
 };
 
 void Server::Impl::forward_frame(picoquic_cnx_t* from, uint64_t stream_id,
@@ -98,6 +107,25 @@ void Server::Impl::forward_frame(picoquic_cnx_t* from, uint64_t stream_id,
     }
 }
 
+void Server::Impl::purge_relay_streams(picoquic_cnx_t* source,
+                                       std::optional<uint64_t> stream_id) {
+    for (auto& [cnx, conn] : conns) {
+        for (auto it = conn.relay_streams.begin();
+             it != conn.relay_streams.end();) {
+            const bool same_source = it->first.first == source;
+            const bool match = stream_id.has_value()
+                                    ? (same_source && it->first.second ==
+                                                           *stream_id)
+                                    : same_source;
+            if (match) {
+                it = conn.relay_streams.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+}
+
 void Server::Impl::handle_stream_frames(picoquic_cnx_t* cnx,
                                         uint64_t stream_id,
                                         const uint8_t* bytes, size_t length) {
@@ -128,10 +156,12 @@ int Server::Impl::connection_callback(picoquic_cnx_t* cnx,
         case picoquic_callback_stream_fin:
             impl->handle_stream_frames(cnx, stream_id, bytes, length);
             impl->conns[cnx].decoders.erase(stream_id);
+            impl->purge_relay_streams(cnx, stream_id);
             break;
         case picoquic_callback_stream_reset:
         case picoquic_callback_stop_sending:
             impl->conns[cnx].decoders.erase(stream_id);
+            impl->purge_relay_streams(cnx, stream_id);
             break;
         case picoquic_callback_datagram: {
             roqr::Frame frame;
@@ -146,6 +176,11 @@ int Server::Impl::connection_callback(picoquic_cnx_t* cnx,
         case picoquic_callback_close:
         case picoquic_callback_application_close:
             impl->conns.erase(cnx);
+            // The dead cnx pointer may be reused by a future connection;
+            // scrub every other destination's relay_streams so a later
+            // connection reusing this address never inherits stale
+            // stream mappings.
+            impl->purge_relay_streams(cnx, std::nullopt);
             break;
         default:
             break;
