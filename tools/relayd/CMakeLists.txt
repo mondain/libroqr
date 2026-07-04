@@ -1,5 +1,15 @@
-# Placeholder: roqr-relayd (the roqr-relayd-lib target and CLI binary) is
-# implemented in Plan 2 Task 3. This stub exists only so that
-# add_subdirectory(tools/relayd) in the root CMakeLists.txt succeeds while
-# ROQR_BUILD_TOOLS=ON in the dev preset, ahead of Task 3 landing. It defines
-# no targets and should be replaced wholesale by Task 3.
+add_library(roqr-relayd-lib STATIC
+  src/server.cpp
+)
+
+target_include_directories(roqr-relayd-lib PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
+target_link_libraries(roqr-relayd-lib PUBLIC roqr-quic)
+
+target_compile_options(roqr-relayd-lib PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra>)
+
+add_executable(roqr-relayd src/main.cpp)
+target_link_libraries(roqr-relayd PRIVATE roqr-relayd-lib)
