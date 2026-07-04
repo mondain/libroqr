@@ -150,9 +150,11 @@ publish is accepted: sequence headers (AVC/AAC config, onMetaData) always on
 stream; subsequent media per configured mode (Auto default).
 
 Subscribe: roqr-egress connects, issues connect/createStream/play on Flow 0,
-receives media frames, re-chunks, serves ffplay. On datagram gap the timeline
-is discontinuous until the next random access point plus decoder config
-(s8); output resumes from there.
+receives media frames, re-chunks, serves ffplay. RoQR frames carry no
+sequence numbers, so datagram gaps are detected heuristically from RTMP
+timestamp discontinuities per flow and message type; on a suspected gap the
+timeline is discontinuous until the next random access point plus decoder
+config (s8), and output resumes from there.
 
 ## Error Handling
 
