@@ -1,6 +1,7 @@
 #include "roqr/rtmp/amf0.hpp"
 
 #include <bit>
+#include <cassert>
 
 namespace roqr::rtmp {
 
@@ -116,6 +117,7 @@ const Amf0Value* Amf0Value::find(const std::string& key) const {
 }
 
 Amf0Value& Amf0Value::set(std::string key, Amf0Value value) {
+    assert(type_ == Type::Object || type_ == Type::EcmaArray);
     for (size_t i = 0; i < keys_.size(); ++i) {
         if (keys_[i] == key) {
             values_[i] = std::move(value);
@@ -128,6 +130,7 @@ Amf0Value& Amf0Value::set(std::string key, Amf0Value value) {
 }
 
 Amf0Value& Amf0Value::push(Amf0Value value) {
+    assert(type_ == Type::StrictArray);
     values_.push_back(std::move(value));
     return *this;
 }

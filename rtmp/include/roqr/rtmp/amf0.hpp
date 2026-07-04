@@ -49,11 +49,13 @@ public:
     const std::string& key_at(size_t i) const { return keys_[i]; }
     const Amf0Value& value_at(size_t i) const { return values_[i]; }
     const Amf0Value* find(const std::string& key) const;
+    // Valid only on Object/EcmaArray values (asserted in debug builds).
     Amf0Value& set(std::string key, Amf0Value value);
 
     // StrictArray elements.
     size_t element_count() const { return values_.size(); }
     const Amf0Value& element_at(size_t i) const { return values_[i]; }
+    // Valid only on StrictArray values (asserted in debug builds).
     Amf0Value& push(Amf0Value value);
 
     bool operator==(const Amf0Value&) const = default;
