@@ -25,15 +25,27 @@ FlowState FlowTable::state(uint64_t flow_id) const {
 }
 
 FlowTable::BufferResult FlowTable::buffer_unknown(Frame frame) {
-    // Implemented in the next task.
-    (void)frame;
-    return BufferResult::LimitExceeded;
+    if (unknown_.size() >= limits_.max_unknown_frames ||
+        unknown_octets_ + frame.payload.size() > limits_.max_unknown_octets) {
+        return BufferResult::LimitExceeded;
+    }
+    unknown_octets_ += frame.payload.size();
+    unknown_.push_back(std::move(frame));
+    return BufferResult::Buffered;
 }
 
 std::vector<Frame> FlowTable::take_buffered(uint64_t flow_id) {
-    // Implemented in the next task.
-    (void)flow_id;
-    return {};
+    std::vector<Frame> out;
+    for (auto it = unknown_.begin(); it != unknown_.end();) {
+        if (it->flow_id == flow_id) {
+            unknown_octets_ -= it->payload.size();
+            out.push_back(std::move(*it));
+            it = unknown_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return out;
 }
 
 }  // namespace roqr

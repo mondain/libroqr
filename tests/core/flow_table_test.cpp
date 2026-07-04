@@ -49,3 +49,77 @@ TEST_CASE("activating an already-active flow is idempotent") {
     CHECK(table.activate(7));
     CHECK(table.state(7) == FlowState::Active);
 }
+
+namespace {
+
+Frame frame_for_flow(uint64_t flow_id, size_t payload_size) {
+    Frame f;
+    f.flow_id = flow_id;
+    f.message_type = 9;
+    f.payload.assign(payload_size, 0xAB);
+    return f;
+}
+
+}  // namespace
+
+TEST_CASE("unknown-flow frames buffer and drain in order") {
+    FlowTable table;
+    CHECK(table.buffer_unknown(frame_for_flow(5, 10)) ==
+          FlowTable::BufferResult::Buffered);
+    Frame second = frame_for_flow(5, 20);
+    second.timestamp = 99;
+    CHECK(table.buffer_unknown(second) == FlowTable::BufferResult::Buffered);
+
+    auto drained = table.take_buffered(5);
+    REQUIRE(drained.size() == 2);
+    CHECK(drained[0].payload.size() == 10);
+    CHECK(drained[1].timestamp == 99);
+    CHECK(table.take_buffered(5).empty());
+}
+
+TEST_CASE("take_buffered only drains the requested flow") {
+    FlowTable table;
+    REQUIRE(table.buffer_unknown(frame_for_flow(5, 10)) ==
+            FlowTable::BufferResult::Buffered);
+    REQUIRE(table.buffer_unknown(frame_for_flow(6, 10)) ==
+            FlowTable::BufferResult::Buffered);
+
+    CHECK(table.take_buffered(5).size() == 1);
+    CHECK(table.take_buffered(6).size() == 1);
+}
+
+TEST_CASE("frame-count limit is enforced") {
+    FlowTable table(FlowTableLimits{.max_unknown_frames = 2,
+                                    .max_unknown_octets = 1024});
+    CHECK(table.buffer_unknown(frame_for_flow(5, 1)) ==
+          FlowTable::BufferResult::Buffered);
+    CHECK(table.buffer_unknown(frame_for_flow(5, 1)) ==
+          FlowTable::BufferResult::Buffered);
+    CHECK(table.buffer_unknown(frame_for_flow(5, 1)) ==
+          FlowTable::BufferResult::LimitExceeded);
+}
+
+TEST_CASE("octet limit is enforced and released on drain") {
+    FlowTable table(FlowTableLimits{.max_unknown_frames = 100,
+                                    .max_unknown_octets = 25});
+    CHECK(table.buffer_unknown(frame_for_flow(5, 20)) ==
+          FlowTable::BufferResult::Buffered);
+    CHECK(table.buffer_unknown(frame_for_flow(6, 20)) ==
+          FlowTable::BufferResult::LimitExceeded);
+
+    CHECK(table.take_buffered(5).size() == 1);
+    CHECK(table.buffer_unknown(frame_for_flow(6, 20)) ==
+          FlowTable::BufferResult::Buffered);
+}
+
+TEST_CASE("retiring a flow drops its buffered frames") {
+    FlowTable table(FlowTableLimits{.max_unknown_frames = 100,
+                                    .max_unknown_octets = 25});
+    REQUIRE(table.buffer_unknown(frame_for_flow(5, 20)) ==
+            FlowTable::BufferResult::Buffered);
+    table.retire(5);
+    CHECK(table.take_buffered(5).empty());
+    // The octet budget was released by retire().
+    CHECK(table.buffer_unknown(frame_for_flow(6, 20)) ==
+          FlowTable::BufferResult::Buffered);
+}
