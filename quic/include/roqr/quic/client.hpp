@@ -41,6 +41,10 @@ public:
                  ClientOptions options = {});
     bool wait_connected(std::chrono::milliseconds timeout);
 
+    // True once the connection is ready and the peer accepted the QUIC
+    // DATAGRAM extension (draft s4).
+    bool datagrams_negotiated() const;
+
     bool send(roqr::Frame frame, DeliveryMode mode);
     void bind_flow(uint64_t flow_id);
     void retire_flow(uint64_t flow_id);

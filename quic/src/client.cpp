@@ -12,6 +12,15 @@
 #include "roqr/quic/context.hpp"
 #include "roqr/quic/outbound_queue.hpp"
 
+// API drift: the pinned picoquic commit declares
+// picoquic_init_transport_parameters(picoquic_tp_t*) -- a single-argument
+// form with no client/extension-mode selector -- in picoquic_internal.h,
+// which is not part of this project's public include path. The symbol
+// itself is a normal exported C function in libpicoquic-core, so rather
+// than pull in the internal header (which drags in TLS-internal types not
+// needed here) we declare the matching prototype ourselves.
+extern "C" void picoquic_init_transport_parameters(picoquic_tp_t* tp);
+
 namespace roqr::quic {
 
 struct Client::Impl {
@@ -47,6 +56,13 @@ struct Client::Impl {
     // Network-thread-only: flow id -> bidi stream id for sending.
     std::map<uint64_t, uint64_t> flow_streams;
     bool started = false;  // set once connect() succeeds
+
+    // Datagram negotiation state: written on the network thread at ready
+    // time (before signal_connected takes the mutex), read under the
+    // mutex once connected is observed true.
+    bool datagrams_ok = false;
+    size_t max_datagram = 0;
+    uint64_t dropped_datagrams = 0;
 
     uint64_t stream_for_flow(uint64_t flow_id) {
         auto it = flow_streams.find(flow_id);
@@ -134,10 +150,27 @@ void Client::Impl::service() {
     while (auto item = outbound.pop()) {
         std::vector<uint8_t> wire;
         if (!roqr::frame_encode(item->frame, wire)) continue;
-        // Task 6 consults resolve_delivery here; for now everything is
-        // stream-carried.
-        const uint64_t stream_id = stream_for_flow(item->frame.flow_id);
-        picoquic_add_to_stream(cnx, stream_id, wire.data(), wire.size(), 0);
+        const ResolvedMode resolved = resolve_delivery(
+            item->frame.message_type, item->mode, datagrams_ok, wire.size(),
+            max_datagram, options.datagram_fallback);
+        switch (resolved) {
+            case ResolvedMode::Datagram:
+                if (picoquic_queue_datagram_frame(cnx, wire.size(),
+                                                  wire.data()) != 0) {
+                    ++dropped_datagrams;  // dropped-not-blocked semantics
+                }
+                break;
+            case ResolvedMode::Stream: {
+                const uint64_t stream_id =
+                    stream_for_flow(item->frame.flow_id);
+                picoquic_add_to_stream(cnx, stream_id, wire.data(),
+                                       wire.size(), 0);
+                break;
+            }
+            case ResolvedMode::Dropped:
+                ++dropped_datagrams;
+                break;
+        }
     }
 }
 
@@ -149,9 +182,18 @@ int Client::Impl::connection_callback(picoquic_cnx_t* /*cnx*/,
                                       void* /*stream_ctx*/) {
     auto* impl = static_cast<Impl*>(callback_ctx);
     switch (event) {
-        case picoquic_callback_ready:
+        case picoquic_callback_ready: {
+            const picoquic_tp_t* remote_tp =
+                picoquic_get_transport_parameters(impl->cnx, 0 /* remote */);
+            if (remote_tp != nullptr &&
+                remote_tp->max_datagram_frame_size > 0) {
+                impl->datagrams_ok = true;
+                impl->max_datagram =
+                    static_cast<size_t>(remote_tp->max_datagram_frame_size);
+            }
             impl->signal_connected();
             break;
+        }
         case picoquic_callback_close:
             impl->signal_closed(0);
             break;
@@ -162,8 +204,16 @@ int Client::Impl::connection_callback(picoquic_cnx_t* /*cnx*/,
         case picoquic_callback_stream_fin:
             impl->on_stream_data(stream_id, bytes, length);
             break;
+        case picoquic_callback_datagram: {
+            roqr::Frame frame;
+            if (roqr::datagram_decode(std::span<const uint8_t>(bytes, length),
+                                      frame) == roqr::DecodeStatus::Ok) {
+                impl->deliver(frame);
+            }
+            break;  // malformed datagrams dropped silently (draft s12)
+        }
         default:
-            break;  // datagram events arrive in Task 6
+            break;
     }
     return 0;
 }
@@ -209,6 +259,15 @@ bool Client::connect(const std::string& host, uint16_t port,
         impl_->options.alpn, impl_->options.insecure_skip_verify);
     if (!impl_->quic) return false;
 
+    // Advertise DATAGRAM support (RFC 9221): nonzero max_datagram_frame_size.
+    // API drift: the pinned picoquic_init_transport_parameters takes only
+    // the tp pointer (no client/extension-mode argument); see the
+    // forward-declaration comment above for why we declare it ourselves.
+    picoquic_tp_t tp;
+    picoquic_init_transport_parameters(&tp);
+    tp.max_datagram_frame_size = 1536;
+    picoquic_set_default_tp(impl_->quic->get(), &tp);
+
     struct sockaddr_storage addr {};
     int is_name = 0;
     if (picoquic_get_server_address(host.c_str(), port, &addr, &is_name) !=
@@ -240,6 +299,11 @@ bool Client::wait_connected(std::chrono::milliseconds timeout) {
     std::unique_lock lock(impl_->mutex);
     return impl_->cv.wait_for(lock, timeout,
                               [&] { return impl_->connected; });
+}
+
+bool Client::datagrams_negotiated() const {
+    std::lock_guard lock(impl_->mutex);
+    return impl_->connected && impl_->datagrams_ok;
 }
 
 bool Client::send(roqr::Frame frame, DeliveryMode mode) {
