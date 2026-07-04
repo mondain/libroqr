@@ -49,6 +49,7 @@ if(ROQR_BUILD_QUIC)
       integration/stream_echo_test.cpp
       integration/datagram_test.cpp
       integration/flow_gating_test.cpp
+      integration/relay_test.cpp
     )
     add_dependencies(roqr-integration-tests roqr-testcerts)
     target_compile_definitions(roqr-integration-tests PRIVATE

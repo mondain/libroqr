@@ -6,10 +6,9 @@
 
 namespace roqr::relayd {
 
-// Echo: reflect every RoQR frame back to its sender on the same carriage
-// (stream frames on the same stream, datagram frames as datagrams).
-// Relay: forward frames to all other connections (Task 8; until then Relay
-// behaves as Echo).
+// Echo: reflect every RoQR frame back to its sender on the same carriage.
+// Relay: forward every RoQR frame to all other live connections, preserving
+// Flow ID, stream id, and carriage; the sender does not get it back.
 enum class Mode { Echo, Relay };
 
 struct ServerOptions {

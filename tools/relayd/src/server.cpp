@@ -38,6 +38,15 @@ struct Server::Impl {
     // Per-connection state, touched only on the network thread.
     struct Conn {
         std::map<uint64_t, roqr::FrameDecoder> decoders;  // by stream id
+        // Relay only: maps a (source connection, source stream id) pair to
+        // the server-initiated bidi stream id opened toward *this*
+        // connection to carry it. Stream ids are per-connection and
+        // parity-coded by initiator (picoquic rejects a peer stream id the
+        // local side hasn't opened), so the source stream id cannot be
+        // reused as-is on every other connection; each destination gets its
+        // own stream per source stream, preserving per-source ordering.
+        std::map<std::pair<picoquic_cnx_t*, uint64_t>, uint64_t>
+            relay_streams;
     };
     std::map<picoquic_cnx_t*, Conn> conns;
 
@@ -49,21 +58,53 @@ struct Server::Impl {
                              picoquic_packet_loop_cb_enum cb_mode,
                              void* callback_ctx, void* callback_arg);
 
-    void echo_stream_frames(picoquic_cnx_t* cnx, uint64_t stream_id,
-                            const uint8_t* bytes, size_t length);
+    void forward_frame(picoquic_cnx_t* from, uint64_t stream_id,
+                       const roqr::Frame& frame, bool as_datagram);
+    void handle_stream_frames(picoquic_cnx_t* cnx, uint64_t stream_id,
+                              const uint8_t* bytes, size_t length);
 };
 
-void Server::Impl::echo_stream_frames(picoquic_cnx_t* cnx,
-                                      uint64_t stream_id,
-                                      const uint8_t* bytes, size_t length) {
+void Server::Impl::forward_frame(picoquic_cnx_t* from, uint64_t stream_id,
+                                 const roqr::Frame& frame, bool as_datagram) {
+    std::vector<uint8_t> wire;
+    if (!roqr::frame_encode(frame, wire)) return;
+    if (options.mode == Mode::Echo) {
+        if (as_datagram) {
+            picoquic_queue_datagram_frame(from, wire.size(), wire.data());
+        } else {
+            picoquic_add_to_stream(from, stream_id, wire.data(), wire.size(),
+                                   0);
+        }
+        return;
+    }
+    // Relay: forward to every other live connection.
+    for (auto& [cnx, conn] : conns) {
+        if (cnx == from) continue;
+        if (as_datagram) {
+            picoquic_queue_datagram_frame(cnx, wire.size(), wire.data());
+        } else {
+            const auto key = std::make_pair(from, stream_id);
+            auto it = conn.relay_streams.find(key);
+            uint64_t dest_stream_id;
+            if (it != conn.relay_streams.end()) {
+                dest_stream_id = it->second;
+            } else {
+                dest_stream_id = picoquic_get_next_local_stream_id(cnx, 0);
+                conn.relay_streams.emplace(key, dest_stream_id);
+            }
+            picoquic_add_to_stream(cnx, dest_stream_id, wire.data(),
+                                   wire.size(), 0);
+        }
+    }
+}
+
+void Server::Impl::handle_stream_frames(picoquic_cnx_t* cnx,
+                                        uint64_t stream_id,
+                                        const uint8_t* bytes, size_t length) {
     auto& decoder = conns[cnx].decoders.try_emplace(stream_id).first->second;
     decoder.feed(std::span<const uint8_t>(bytes, length));
     while (auto frame = decoder.next()) {
-        std::vector<uint8_t> wire;
-        if (roqr::frame_encode(*frame, wire)) {
-            picoquic_add_to_stream(cnx, stream_id, wire.data(), wire.size(),
-                                   0);
-        }
+        forward_frame(cnx, stream_id, *frame, /*as_datagram=*/false);
     }
 }
 
@@ -75,11 +116,17 @@ int Server::Impl::connection_callback(picoquic_cnx_t* cnx,
                                       void* /*stream_ctx*/) {
     auto* impl = static_cast<Impl*>(callback_ctx);
     switch (event) {
+        case picoquic_callback_ready:
+            // Track the connection as soon as it is usable, not only once
+            // it has sent data, so relay forwarding reaches pure
+            // subscribers (connections that never send).
+            impl->conns.try_emplace(cnx);
+            break;
         case picoquic_callback_stream_data:
-            impl->echo_stream_frames(cnx, stream_id, bytes, length);
+            impl->handle_stream_frames(cnx, stream_id, bytes, length);
             break;
         case picoquic_callback_stream_fin:
-            impl->echo_stream_frames(cnx, stream_id, bytes, length);
+            impl->handle_stream_frames(cnx, stream_id, bytes, length);
             impl->conns[cnx].decoders.erase(stream_id);
             break;
         case picoquic_callback_stream_reset:
@@ -90,11 +137,8 @@ int Server::Impl::connection_callback(picoquic_cnx_t* cnx,
             roqr::Frame frame;
             if (roqr::datagram_decode(std::span<const uint8_t>(bytes, length),
                                       frame) == roqr::DecodeStatus::Ok) {
-                std::vector<uint8_t> wire;
-                if (roqr::frame_encode(frame, wire)) {
-                    picoquic_queue_datagram_frame(cnx, wire.size(),
-                                                  wire.data());
-                }
+                impl->conns.try_emplace(cnx);  // track datagram-only conns
+                impl->forward_frame(cnx, 0, frame, /*as_datagram=*/true);
             }
             // Malformed datagrams are dropped without closing (draft s12).
             break;
