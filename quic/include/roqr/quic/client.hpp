@@ -45,6 +45,11 @@ public:
     // DATAGRAM extension (draft s4).
     bool datagrams_negotiated() const;
 
+    // Number of RoQR frames sent in QUIC DATAGRAM frames so far.
+    uint64_t datagrams_sent() const;
+    // Frames dropped by Datagram-mode policy or queue failure.
+    uint64_t datagrams_dropped() const;
+
     bool send(roqr::Frame frame, DeliveryMode mode);
     void bind_flow(uint64_t flow_id);
     void retire_flow(uint64_t flow_id);

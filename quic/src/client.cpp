@@ -1,5 +1,6 @@
 #include "roqr/quic/client.hpp"
 
+#include <atomic>
 #include <condition_variable>
 #include <map>
 #include <mutex>
@@ -11,15 +12,6 @@
 
 #include "roqr/quic/context.hpp"
 #include "roqr/quic/outbound_queue.hpp"
-
-// API drift: the pinned picoquic commit declares
-// picoquic_init_transport_parameters(picoquic_tp_t*) -- a single-argument
-// form with no client/extension-mode selector -- in picoquic_internal.h,
-// which is not part of this project's public include path. The symbol
-// itself is a normal exported C function in libpicoquic-core, so rather
-// than pull in the internal header (which drags in TLS-internal types not
-// needed here) we declare the matching prototype ourselves.
-extern "C" void picoquic_init_transport_parameters(picoquic_tp_t* tp);
 
 namespace roqr::quic {
 
@@ -63,7 +55,11 @@ struct Client::Impl {
     // mutex once connected is observed true.
     bool datagrams_ok = false;
     size_t max_datagram = 0;
-    uint64_t dropped_datagrams = 0;
+
+    // Send-side counters: written on the network thread, read from the
+    // app thread via the public accessors.
+    std::atomic<uint64_t> datagrams_sent{0};
+    std::atomic<uint64_t> dropped_datagrams{0};
 
     uint64_t stream_for_flow(uint64_t flow_id) {
         auto it = flow_streams.find(flow_id);
@@ -159,8 +155,11 @@ void Client::Impl::service() {
         switch (resolved) {
             case ResolvedMode::Datagram:
                 if (picoquic_queue_datagram_frame(cnx, wire.size(),
-                                                  wire.data()) != 0) {
-                    ++dropped_datagrams;  // dropped-not-blocked semantics
+                                                  wire.data()) == 0) {
+                    datagrams_sent.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    // dropped-not-blocked semantics
+                    dropped_datagrams.fetch_add(1, std::memory_order_relaxed);
                 }
                 break;
             case ResolvedMode::Stream: {
@@ -171,7 +170,7 @@ void Client::Impl::service() {
                 break;
             }
             case ResolvedMode::Dropped:
-                ++dropped_datagrams;
+                dropped_datagrams.fetch_add(1, std::memory_order_relaxed);
                 break;
         }
     }
@@ -262,14 +261,12 @@ bool Client::connect(const std::string& host, uint16_t port,
         impl_->options.alpn, impl_->options.insecure_skip_verify);
     if (!impl_->quic) return false;
 
-    // Advertise DATAGRAM support (RFC 9221): nonzero max_datagram_frame_size.
-    // API drift: the pinned picoquic_init_transport_parameters takes only
-    // the tp pointer (no client/extension-mode argument); see the
-    // forward-declaration comment above for why we declare it ourselves.
-    picoquic_tp_t tp;
-    picoquic_init_transport_parameters(&tp);
-    tp.max_datagram_frame_size = 1536;
-    picoquic_set_default_tp(impl_->quic->get(), &tp);
+    // Advertise DATAGRAM support (RFC 9221).
+    if (picoquic_set_default_tp_value(impl_->quic->get(),
+                                      picoquic_tp_max_datagram_frame_size,
+                                      1536) != 0) {
+        return false;
+    }
 
     struct sockaddr_storage addr {};
     int is_name = 0;
@@ -307,6 +304,14 @@ bool Client::wait_connected(std::chrono::milliseconds timeout) {
 bool Client::datagrams_negotiated() const {
     std::lock_guard lock(impl_->mutex);
     return impl_->connected && impl_->datagrams_ok;
+}
+
+uint64_t Client::datagrams_sent() const {
+    return impl_->datagrams_sent.load(std::memory_order_relaxed);
+}
+
+uint64_t Client::datagrams_dropped() const {
+    return impl_->dropped_datagrams.load(std::memory_order_relaxed);
 }
 
 bool Client::send(roqr::Frame frame, DeliveryMode mode) {

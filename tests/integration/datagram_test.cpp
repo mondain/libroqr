@@ -63,6 +63,8 @@ TEST_CASE("small media frame round-trips as a datagram") {
         std::lock_guard lock(got.mutex);
         CHECK(got.frames[0] == f);
     }
+    CHECK(client.datagrams_sent() == 1);
+    CHECK(client.datagrams_dropped() == 0);
     client.close();
     client.wait_closed(5s);
     server.stop();
@@ -90,6 +92,8 @@ TEST_CASE("oversized datagram falls back to stream and still arrives") {
         std::lock_guard lock(got.mutex);
         CHECK(got.frames[0] == f);
     }
+    CHECK(client.datagrams_sent() == 0);
+    CHECK(client.datagrams_dropped() == 0);
     client.close();
     client.wait_closed(5s);
     server.stop();
