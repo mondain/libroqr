@@ -28,9 +28,15 @@ size_t varint_encode(uint64_t value, std::span<uint8_t> out) {
 }
 
 std::optional<VarintDecode> varint_decode(std::span<const uint8_t> in) {
-    // Implemented in the next task.
-    (void)in;
-    return std::nullopt;
+    if (in.empty()) return std::nullopt;
+    const size_t len = size_t{1} << (in[0] >> 6);
+    if (in.size() < len) return std::nullopt;
+
+    uint64_t value = in[0] & 0x3F;
+    for (size_t i = 1; i < len; ++i) {
+        value = (value << 8) | in[i];
+    }
+    return VarintDecode{value, len};
 }
 
 }  // namespace roqr
