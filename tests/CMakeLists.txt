@@ -23,6 +23,8 @@ catch_discover_tests(roqr-core-tests)
 if(ROQR_BUILD_QUIC)
   add_executable(roqr-quic-tests
     quic/context_test.cpp
+    quic/delivery_test.cpp
+    quic/outbound_queue_test.cpp
   )
   target_link_libraries(roqr-quic-tests PRIVATE roqr-quic Catch2::Catch2WithMain)
   catch_discover_tests(roqr-quic-tests)

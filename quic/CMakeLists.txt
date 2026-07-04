@@ -1,5 +1,6 @@
 add_library(roqr-quic STATIC
   src/context.cpp
+  src/delivery.cpp
 )
 
 target_include_directories(roqr-quic PUBLIC
