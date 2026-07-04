@@ -38,3 +38,16 @@ TEST_CASE("wait_connected times out when no server is listening") {
     REQUIRE(client.connect("127.0.0.1", 45553));  // nothing listening
     CHECK_FALSE(client.wait_connected(2s));
 }
+
+TEST_CASE("connect refuses a second call on the same client") {
+    roqr::relayd::Server server;
+    REQUIRE(server.start(server_opts(45561)));
+
+    roqr::quic::Client client;
+    REQUIRE(client.connect("127.0.0.1", 45561));
+    CHECK_FALSE(client.connect("127.0.0.1", 45561));
+
+    client.close();
+    client.wait_closed(5s);
+    server.stop();
+}

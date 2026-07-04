@@ -151,6 +151,7 @@ void Client::on_closed(ClosedHandler h) {
 
 bool Client::connect(const std::string& host, uint16_t port,
                      ClientOptions options) {
+    if (impl_->thread_ctx != nullptr) return false;  // already connected
     impl_->options = std::move(options);
     impl_->flows = roqr::FlowTable(impl_->options.flow_limits);
     impl_->quic = QuicContext::create_client(
