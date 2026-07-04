@@ -58,6 +58,19 @@ TEST_CASE("frame_encode rejects varint fields out of range") {
     f.timestamp = kVarintMax + 1;
     CHECK_FALSE(frame_encode(f, out));
     CHECK(out.empty());
+
+    f = sample_video_frame();
+    f.message_stream_id = kVarintMax + 1;
+    out = {0xAA};
+    CHECK_FALSE(frame_encode(f, out));
+    REQUIRE(out.size() == 1);
+    CHECK(out[0] == 0xAA);
+
+    f = sample_video_frame();
+    f.chunk_stream_id = kVarintMax + 1;
+    CHECK_FALSE(frame_encode(f, out));
+    REQUIRE(out.size() == 1);
+    CHECK(out[0] == 0xAA);
 }
 
 TEST_CASE("datagram_decode round-trips an encoded frame") {
@@ -154,6 +167,51 @@ TEST_CASE("FrameDecoder marks zero payload length malformed") {
     dec.feed(wire);
     CHECK(dec.malformed());
     CHECK_FALSE(dec.next().has_value());
+}
+
+TEST_CASE("FrameDecoder retains frames decoded before a malformed frame") {
+    std::vector<uint8_t> wire;
+    REQUIRE(frame_encode(sample_video_frame(), wire));
+    // Zero payload length frame directly after a valid frame in one feed.
+    const uint8_t bad[] = {0x00, 0x00, 0x09, 0x01, 0x04, 0x00};
+    wire.insert(wire.end(), bad, bad + 6);
+
+    FrameDecoder dec;
+    dec.feed(wire);
+    CHECK(dec.malformed());
+    auto f = dec.next();
+    REQUIRE(f.has_value());
+    CHECK(*f == sample_video_frame());
+    CHECK_FALSE(dec.next().has_value());
+}
+
+TEST_CASE("FrameDecoder handles interleaved feed and next across frames") {
+    Frame a = sample_video_frame();
+    Frame b = sample_video_frame();
+    b.timestamp = 2000;
+    b.payload = {0x01, 0x02, 0x03};
+
+    std::vector<uint8_t> wa, wb;
+    REQUIRE(frame_encode(a, wa));
+    REQUIRE(frame_encode(b, wb));
+
+    FrameDecoder dec;
+    // Partial frame A.
+    dec.feed(std::span<const uint8_t>(wa.data(), wa.size() - 1));
+    CHECK_FALSE(dec.next().has_value());
+    // Rest of A plus partial B.
+    std::vector<uint8_t> chunk(wa.end() - 1, wa.end());
+    chunk.insert(chunk.end(), wb.begin(), wb.begin() + 3);
+    dec.feed(chunk);
+    auto f1 = dec.next();
+    REQUIRE(f1.has_value());
+    CHECK(*f1 == a);
+    CHECK_FALSE(dec.next().has_value());
+    // Rest of B.
+    dec.feed(std::span<const uint8_t>(wb.data() + 3, wb.size() - 3));
+    auto f2 = dec.next();
+    REQUIRE(f2.has_value());
+    CHECK(*f2 == b);
 }
 
 TEST_CASE("FrameDecoder enforces the payload cap and latches") {

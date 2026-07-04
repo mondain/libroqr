@@ -26,7 +26,7 @@ FlowState FlowTable::state(uint64_t flow_id) const {
 
 FlowTable::BufferResult FlowTable::buffer_unknown(Frame frame) {
     if (unknown_.size() >= limits_.max_unknown_frames ||
-        unknown_octets_ + frame.payload.size() > limits_.max_unknown_octets) {
+        frame.payload.size() > limits_.max_unknown_octets - unknown_octets_) {
         return BufferResult::LimitExceeded;
     }
     unknown_octets_ += frame.payload.size();
