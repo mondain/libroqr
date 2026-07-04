@@ -43,6 +43,7 @@ struct Client::Impl {
 
     // App -> network thread flow requests, drained in service().
     std::vector<std::pair<uint64_t, bool>> flow_requests;  // (id, activate)
+    std::vector<uint64_t> reset_requests;  // app -> network thread
 
     // Network-thread-only state (Tasks 5-7 fill these in).
     roqr::FlowTable flows;
@@ -67,12 +68,14 @@ struct Client::Impl {
     uint64_t stream_for_flow(uint64_t flow_id) {
         auto it = flow_streams.find(flow_id);
         if (it != flow_streams.end()) return it->second;
-        uint64_t id;
-        if (flow_id == 0) {
-            id = 0;  // first client-initiated bidi stream
-        } else {
-            id = picoquic_get_next_local_stream_id(cnx, 0);
-        }
+        // picoquic_get_next_local_stream_id(cnx, 0) tracks the connection's
+        // true next-unused client bidi id (0 on the very first call), so a
+        // flow_id == 0 special case hardcoding id 0 is not just redundant
+        // but unsafe: if another flow's stream already consumed id 0 (e.g.
+        // after that flow's stream was reset and flow_streams erased its
+        // entry), flow 0 would collide with the already-finished stream
+        // instead of getting a fresh one. Always defer to picoquic.
+        const uint64_t id = picoquic_get_next_local_stream_id(cnx, 0);
         flow_streams[flow_id] = id;
         return id;
     }
@@ -184,6 +187,19 @@ void Client::Impl::service() {
         } else {
             flows.retire(flow_id);
         }
+    }
+    std::vector<uint64_t> resets;
+    {
+        std::lock_guard lock(mutex);
+        resets.swap(reset_requests);
+    }
+    for (uint64_t flow_id : resets) {
+        auto it = flow_streams.find(flow_id);
+        if (it == flow_streams.end()) continue;
+        picoquic_reset_stream(
+            cnx, it->second,
+            static_cast<uint64_t>(roqr::ErrorCode::FrameCancelled));
+        flow_streams.erase(it);  // next send opens a fresh stream
     }
     while (auto item = outbound.pop()) {
         std::vector<uint8_t> wire;
@@ -381,8 +397,12 @@ void Client::retire_flow(uint64_t flow_id) {
     impl_->wake();
 }
 
-void Client::reset_flow_stream(uint64_t /*flow_id*/) {
-    // Task 9.
+void Client::reset_flow_stream(uint64_t flow_id) {
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->reset_requests.push_back(flow_id);
+    }
+    impl_->wake();
 }
 
 void Client::close(roqr::ErrorCode code) {
