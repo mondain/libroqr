@@ -11,6 +11,7 @@ add_executable(roqr-core-tests
   core/version_test.cpp
   core/varint_test.cpp
   core/frame_test.cpp
+  core/flow_table_test.cpp
 )
 
 target_link_libraries(roqr-core-tests PRIVATE roqr-core Catch2::Catch2WithMain)

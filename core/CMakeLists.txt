@@ -1,4 +1,6 @@
 add_library(roqr-core STATIC
+  src/error.cpp
+  src/flow_table.cpp
   src/frame.cpp
   src/varint.cpp
   src/version.cpp
