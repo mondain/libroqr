@@ -1,0 +1,456 @@
+#include "roqr/quic/client.hpp"
+
+#include <atomic>
+#include <condition_variable>
+#include <map>
+#include <mutex>
+#include <vector>
+
+#include <picoquic.h>
+#include <picoquic_packet_loop.h>
+#include <picoquic_utils.h>
+
+#include "roqr/quic/context.hpp"
+#include "roqr/quic/outbound_queue.hpp"
+
+namespace roqr::quic {
+
+struct Client::Impl {
+    ClientOptions options;
+    std::unique_ptr<QuicContext> quic;
+    picoquic_cnx_t* cnx = nullptr;  // network thread only after connect
+    picoquic_network_thread_ctx_t* thread_ctx = nullptr;
+    int thread_ret = 0;
+    // Must outlive the network thread: picoquic_packet_loop_v3 keeps a
+    // pointer to this (thread_ctx->param) and both reads and writes it
+    // (e.g. send_length_max) for the thread's entire lifetime, so it
+    // cannot be a stack-local in connect().
+    picoquic_packet_loop_param_t loop_param{};
+
+    MessageHandler message_handler;
+    ClosedHandler closed_handler;
+
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool connected = false;
+    bool closed = false;
+    uint64_t close_code = 0;
+
+    // App -> network thread.
+    OutboundQueue outbound;
+    bool close_requested = false;
+    uint64_t requested_close_code = 0;
+
+    // App -> network thread flow requests, drained in service().
+    std::vector<std::pair<uint64_t, bool>> flow_requests;  // (id, activate)
+    std::vector<uint64_t> reset_requests;  // app -> network thread
+
+    // Network-thread-only state (Tasks 5-7 fill these in).
+    roqr::FlowTable flows;
+    std::map<uint64_t, roqr::FrameDecoder> decoders;  // by stream id
+
+    // Network-thread-only: flow id -> bidi stream id for sending.
+    std::map<uint64_t, uint64_t> flow_streams;
+    bool started = false;  // set once connect() succeeds
+    bool close_performed = false;
+
+    // Datagram negotiation state: written on the network thread at ready
+    // time (before signal_connected takes the mutex), read under the
+    // mutex once connected is observed true.
+    bool datagrams_ok = false;
+    size_t max_datagram = 0;
+
+    // Send-side counters: written on the network thread, read from the
+    // app thread via the public accessors.
+    std::atomic<uint64_t> datagrams_sent{0};
+    std::atomic<uint64_t> dropped_datagrams{0};
+
+    uint64_t stream_for_flow(uint64_t flow_id) {
+        auto it = flow_streams.find(flow_id);
+        if (it != flow_streams.end()) return it->second;
+        // picoquic_get_next_local_stream_id(cnx, 0) tracks the connection's
+        // true next-unused client bidi id (0 on the very first call), so a
+        // flow_id == 0 special case hardcoding id 0 is not just redundant
+        // but unsafe: if another flow's stream already consumed id 0 (e.g.
+        // after that flow's stream was reset and flow_streams erased its
+        // entry), flow 0 would collide with the already-finished stream
+        // instead of getting a fresh one. Always defer to picoquic.
+        const uint64_t id = picoquic_get_next_local_stream_id(cnx, 0);
+        flow_streams[flow_id] = id;
+        return id;
+    }
+
+    void deliver(const roqr::Frame& frame) {
+        if (message_handler) message_handler(frame);
+    }
+
+    void gate_and_deliver(roqr::Frame frame, bool from_stream) {
+        switch (flows.state(frame.flow_id)) {
+            case roqr::FlowState::Active:
+                deliver(frame);
+                break;
+            case roqr::FlowState::Retired:
+                break;  // dropped
+            case roqr::FlowState::Unknown:
+                if (flows.buffer_unknown(std::move(frame)) ==
+                    roqr::FlowTable::BufferResult::LimitExceeded) {
+                    if (from_stream) {
+                        // Bounded buffering exhausted (draft s5).
+                        fail_connection(roqr::ErrorCode::UnknownFlowId);
+                    }
+                    // Datagram overflow: drop silently.
+                }
+                break;
+        }
+    }
+
+    void fail_connection(roqr::ErrorCode code) {
+        if (cnx != nullptr) {
+            picoquic_close(cnx, static_cast<uint64_t>(code));
+        }
+    }
+
+    void on_stream_data(uint64_t stream_id, const uint8_t* bytes,
+                        size_t length, bool fin) {
+        auto& decoder = decoders.try_emplace(stream_id).first->second;
+        decoder.feed(std::span<const uint8_t>(bytes, length));
+        while (auto frame = decoder.next()) {
+            gate_and_deliver(std::move(*frame), /*from_stream=*/true);
+        }
+        if (decoder.malformed()) {
+            fail_connection(roqr::ErrorCode::FrameEncodingError);
+        }
+        if (fin) {
+            // Stream is done; drop its decoder so a future stream id reuse
+            // (or simple memory growth over a long session) doesn't retain
+            // stale per-stream state.
+            decoders.erase(stream_id);
+        }
+    }
+
+    void wake() {
+        if (thread_ctx != nullptr) {
+            picoquic_wake_up_network_thread(thread_ctx);
+        }
+    }
+
+    void signal_connected() {
+        std::lock_guard lock(mutex);
+        connected = true;
+        cv.notify_all();
+    }
+
+    void signal_closed(uint64_t code) {
+        {
+            std::lock_guard lock(mutex);
+            if (closed) return;
+            closed = true;
+            close_code = code;
+            cv.notify_all();
+        }
+        if (closed_handler) closed_handler(code);
+    }
+
+    // Runs on the network thread: apply app-thread requests.
+    void service();
+
+    static int connection_callback(picoquic_cnx_t* cnx, uint64_t stream_id,
+                                   uint8_t* bytes, size_t length,
+                                   picoquic_call_back_event_t event,
+                                   void* callback_ctx, void* stream_ctx);
+    static int loop_callback(picoquic_quic_t* quic,
+                             picoquic_packet_loop_cb_enum cb_mode,
+                             void* callback_ctx, void* callback_arg);
+};
+
+void Client::Impl::service() {
+    bool do_close = false;
+    uint64_t code = 0;
+    {
+        std::lock_guard lock(mutex);
+        do_close = close_requested;
+        code = requested_close_code;
+    }
+    if (do_close) {
+        if (!close_performed && cnx != nullptr) {
+            picoquic_close(cnx, code);
+            close_performed = true;
+        }
+        return;
+    }
+    std::vector<std::pair<uint64_t, bool>> requests;
+    {
+        std::lock_guard lock(mutex);
+        requests.swap(flow_requests);
+    }
+    for (auto [flow_id, activate] : requests) {
+        if (activate) {
+            if (flows.activate(flow_id)) {
+                for (auto& frame : flows.take_buffered(flow_id)) {
+                    deliver(frame);
+                }
+            }
+        } else {
+            flows.retire(flow_id);
+        }
+    }
+    std::vector<uint64_t> resets;
+    {
+        std::lock_guard lock(mutex);
+        resets.swap(reset_requests);
+    }
+    for (uint64_t flow_id : resets) {
+        auto it = flow_streams.find(flow_id);
+        if (it == flow_streams.end()) continue;
+        picoquic_reset_stream(
+            cnx, it->second,
+            static_cast<uint64_t>(roqr::ErrorCode::FrameCancelled));
+        flow_streams.erase(it);  // next send opens a fresh stream
+    }
+    while (auto item = outbound.pop()) {
+        std::vector<uint8_t> wire;
+        if (!roqr::frame_encode(item->frame, wire)) continue;
+        const ResolvedMode resolved = resolve_delivery(
+            item->frame.message_type, item->mode, datagrams_ok, wire.size(),
+            max_datagram, options.datagram_fallback);
+        auto send_on_stream = [&] {
+            const uint64_t stream_id = stream_for_flow(item->frame.flow_id);
+            picoquic_add_to_stream(cnx, stream_id, wire.data(), wire.size(),
+                                   0);
+        };
+        switch (resolved) {
+            case ResolvedMode::Datagram:
+                if (picoquic_queue_datagram_frame(cnx, wire.size(),
+                                                  wire.data()) == 0) {
+                    datagrams_sent.fetch_add(1, std::memory_order_relaxed);
+                } else if (item->mode == DeliveryMode::Auto ||
+                          options.datagram_fallback ==
+                              DatagramFallback::Stream) {
+                    // Queueing failed (e.g. peer's datagram budget momentarily
+                    // exhausted); honor fallback policy instead of silently
+                    // dropping when the caller asked for Stream fallback, and
+                    // always fall back for Auto (Auto never drops by policy).
+                    send_on_stream();
+                } else {
+                    // Datagram mode with an explicit Drop fallback policy.
+                    dropped_datagrams.fetch_add(1, std::memory_order_relaxed);
+                }
+                break;
+            case ResolvedMode::Stream:
+                send_on_stream();
+                break;
+            case ResolvedMode::Dropped:
+                dropped_datagrams.fetch_add(1, std::memory_order_relaxed);
+                break;
+        }
+    }
+}
+
+int Client::Impl::connection_callback(picoquic_cnx_t* /*cnx*/,
+                                      uint64_t stream_id, uint8_t* bytes,
+                                      size_t length,
+                                      picoquic_call_back_event_t event,
+                                      void* callback_ctx,
+                                      void* /*stream_ctx*/) {
+    auto* impl = static_cast<Impl*>(callback_ctx);
+    switch (event) {
+        case picoquic_callback_ready: {
+            const picoquic_tp_t* remote_tp =
+                picoquic_get_transport_parameters(impl->cnx, 0 /* remote */);
+            if (remote_tp != nullptr &&
+                remote_tp->max_datagram_frame_size > 0) {
+                impl->datagrams_ok = true;
+                impl->max_datagram =
+                    static_cast<size_t>(remote_tp->max_datagram_frame_size);
+            }
+            impl->signal_connected();
+            break;
+        }
+        case picoquic_callback_close:
+            impl->signal_closed(0);
+            break;
+        case picoquic_callback_application_close:
+            impl->signal_closed(picoquic_get_application_error(impl->cnx));
+            break;
+        case picoquic_callback_stream_data:
+            impl->on_stream_data(stream_id, bytes, length, /*fin=*/false);
+            break;
+        case picoquic_callback_stream_fin:
+            impl->on_stream_data(stream_id, bytes, length, /*fin=*/true);
+            break;
+        case picoquic_callback_stream_reset:
+        case picoquic_callback_stop_sending: {
+            auto it = impl->decoders.find(stream_id);
+            if (it != impl->decoders.end()) impl->decoders.erase(it);
+            break;
+        }
+        case picoquic_callback_datagram: {
+            roqr::Frame frame;
+            if (roqr::datagram_decode(std::span<const uint8_t>(bytes, length),
+                                      frame) == roqr::DecodeStatus::Ok) {
+                impl->gate_and_deliver(std::move(frame),
+                                       /*from_stream=*/false);
+            }
+            break;  // malformed datagrams dropped silently (draft s12)
+        }
+        default:
+            break;
+    }
+    return 0;
+}
+
+int Client::Impl::loop_callback(picoquic_quic_t* /*quic*/,
+                                picoquic_packet_loop_cb_enum cb_mode,
+                                void* callback_ctx, void* /*callback_arg*/) {
+    auto* impl = static_cast<Impl*>(callback_ctx);
+    switch (cb_mode) {
+        case picoquic_packet_loop_wake_up:
+        case picoquic_packet_loop_after_receive:
+        case picoquic_packet_loop_after_send:
+            impl->service();
+            break;
+        default:
+            break;
+    }
+    return 0;
+}
+
+Client::Client() : impl_(std::make_unique<Impl>()) {}
+
+Client::~Client() {
+    if (impl_->thread_ctx != nullptr) {
+        picoquic_delete_network_thread(impl_->thread_ctx);
+        impl_->thread_ctx = nullptr;
+    }
+    // Impl::quic is declared before mutex/cv/closed_handler, so its dtor
+    // (picoquic_free -> picoquic_callback_close -> signal_closed) would
+    // otherwise run after those members are already destroyed if the cnx
+    // was not cleanly disconnected. Silence signal_closed first, then free
+    // the quic context explicitly while Impl is still fully alive.
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->closed = true;  // silence signal_closed during context teardown
+    }
+    impl_->quic.reset();  // free the quic context while Impl is fully alive
+}
+
+void Client::on_message(MessageHandler h) {
+    impl_->message_handler = std::move(h);
+}
+void Client::on_closed(ClosedHandler h) {
+    impl_->closed_handler = std::move(h);
+}
+
+bool Client::connect(const std::string& host, uint16_t port,
+                     ClientOptions options) {
+    if (impl_->thread_ctx != nullptr) return false;  // already connected
+    impl_->options = std::move(options);
+    impl_->flows = roqr::FlowTable(impl_->options.flow_limits);
+    impl_->quic = QuicContext::create_client(
+        impl_->options.alpn, impl_->options.insecure_skip_verify);
+    if (!impl_->quic) return false;
+
+    // Advertise DATAGRAM support (RFC 9221).
+    if (picoquic_set_default_tp_value(impl_->quic->get(),
+                                      picoquic_tp_max_datagram_frame_size,
+                                      1536) != 0) {
+        return false;
+    }
+
+    struct sockaddr_storage addr {};
+    int is_name = 0;
+    if (picoquic_get_server_address(host.c_str(), port, &addr, &is_name) !=
+        0) {
+        return false;
+    }
+
+    const uint64_t now = picoquic_current_time();
+    impl_->cnx = picoquic_create_client_cnx(
+        impl_->quic->get(), reinterpret_cast<struct sockaddr*>(&addr), now,
+        0, host.c_str(), impl_->options.alpn.c_str(),
+        &Impl::connection_callback, impl_.get());
+    if (impl_->cnx == nullptr) return false;
+
+    impl_->loop_param = picoquic_packet_loop_param_t{};
+    impl_->loop_param.local_af = AF_INET;
+    impl_->thread_ctx = picoquic_start_network_thread(
+        impl_->quic->get(), &impl_->loop_param, &Impl::loop_callback,
+        impl_.get(), &impl_->thread_ret);
+    if (impl_->thread_ctx == nullptr) return false;
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->started = true;
+    }
+    return true;
+}
+
+bool Client::wait_connected(std::chrono::milliseconds timeout) {
+    std::unique_lock lock(impl_->mutex);
+    impl_->cv.wait_for(
+        lock, timeout, [&] { return impl_->connected || impl_->closed; });
+    return impl_->connected;
+}
+
+bool Client::datagrams_negotiated() const {
+    std::lock_guard lock(impl_->mutex);
+    return impl_->connected && impl_->datagrams_ok;
+}
+
+uint64_t Client::datagrams_sent() const {
+    return impl_->datagrams_sent.load(std::memory_order_relaxed);
+}
+
+uint64_t Client::datagrams_dropped() const {
+    return impl_->dropped_datagrams.load(std::memory_order_relaxed);
+}
+
+bool Client::send(roqr::Frame frame, DeliveryMode mode) {
+    {
+        std::lock_guard lock(impl_->mutex);
+        if (!impl_->started || impl_->closed || impl_->close_requested) return false;
+    }
+    if (frame.payload.empty()) return false;
+    impl_->outbound.push({std::move(frame), mode});
+    impl_->wake();
+    return true;
+}
+
+void Client::bind_flow(uint64_t flow_id) {
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->flow_requests.emplace_back(flow_id, true);
+    }
+    impl_->wake();
+}
+
+void Client::retire_flow(uint64_t flow_id) {
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->flow_requests.emplace_back(flow_id, false);
+    }
+    impl_->wake();
+}
+
+void Client::reset_flow_stream(uint64_t flow_id) {
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->reset_requests.push_back(flow_id);
+    }
+    impl_->wake();
+}
+
+void Client::close(roqr::ErrorCode code) {
+    {
+        std::lock_guard lock(impl_->mutex);
+        impl_->close_requested = true;
+        impl_->requested_close_code = static_cast<uint64_t>(code);
+    }
+    impl_->wake();
+}
+
+bool Client::wait_closed(std::chrono::milliseconds timeout) {
+    std::unique_lock lock(impl_->mutex);
+    return impl_->cv.wait_for(lock, timeout, [&] { return impl_->closed; });
+}
+
+}  // namespace roqr::quic
