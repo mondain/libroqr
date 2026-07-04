@@ -1,5 +1,6 @@
 add_library(roqr-rtmp STATIC
   src/amf0.cpp
+  src/handshake.cpp
 )
 
 target_include_directories(roqr-rtmp PUBLIC
