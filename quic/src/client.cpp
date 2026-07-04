@@ -56,6 +56,7 @@ struct Client::Impl {
     // Network-thread-only: flow id -> bidi stream id for sending.
     std::map<uint64_t, uint64_t> flow_streams;
     bool started = false;  // set once connect() succeeds
+    bool close_performed = false;
 
     // Datagram negotiation state: written on the network thread at ready
     // time (before signal_connected takes the mutex), read under the
@@ -141,10 +142,12 @@ void Client::Impl::service() {
         std::lock_guard lock(mutex);
         do_close = close_requested;
         code = requested_close_code;
-        close_requested = false;
     }
-    if (do_close && cnx != nullptr) {
-        picoquic_close(cnx, code);
+    if (do_close) {
+        if (!close_performed && cnx != nullptr) {
+            picoquic_close(cnx, code);
+            close_performed = true;
+        }
         return;
     }
     while (auto item = outbound.pop()) {
