@@ -50,16 +50,21 @@ TEST_CASE("classify dispatches by message type") {
     CHECK(unknown.force_stream);
 }
 
-TEST_CASE("ex-header and empty payloads are conservative until Task 7") {
+TEST_CASE("ex-header dispatch reaches the enhanced classifier") {
+    // Well-formed enhanced sequence-start headers classify precisely and no
+    // longer need conservative force_stream (see classify_ertmp_test.cpp for
+    // full E-RTMP v1/v2 coverage added in Task 7).
     const uint8_t exv[] = {0x90, 'h', 'v', 'c', '1'};
     auto v = classify_video(exv);
     CHECK(v.enhanced);
-    CHECK(v.force_stream);
+    CHECK(v.cls == MediaClass::SequenceHeader);
+    CHECK_FALSE(v.force_stream);
 
     const uint8_t exa[] = {0x90, 'a', 'c', '-', '3'};
     auto a = classify_audio(exa);
     CHECK(a.enhanced);
-    CHECK(a.force_stream);
+    CHECK(a.cls == MediaClass::SequenceHeader);
+    CHECK_FALSE(a.force_stream);
 
     CHECK(classify_video({}).force_stream);
     CHECK(classify_audio({}).force_stream);
