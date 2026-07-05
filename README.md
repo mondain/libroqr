@@ -23,7 +23,7 @@ ctest --preset dev
 ```
 
 The core protocol library builds without picoquic:
-`cmake -S . -B build -DROQR_BUILD_QUIC=OFF && cmake --build build`.
+`cmake -S . -B build -DROQR_BUILD_QUIC=OFF -DROQR_BUILD_EXAMPLES=OFF && cmake --build build`.
 
 ## Layout
 
