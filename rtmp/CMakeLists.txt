@@ -4,6 +4,7 @@ add_library(roqr-rtmp STATIC
   src/chunk_reader.cpp
   src/chunk_writer.cpp
   src/classify.cpp
+  src/server_session.cpp
 )
 
 target_include_directories(roqr-rtmp PUBLIC
