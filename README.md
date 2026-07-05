@@ -34,4 +34,16 @@ The core protocol library builds without picoquic:
 - `tools/relayd/` the RoQR test relay
 - `examples/` roqr-ingest, roqr-egress, roqr-duplex
 
+## Language bindings
+
+- `ffi/` a C ABI (`roqr.h` for the client, `roqr_rtmp.h` for the ingest/egress
+  gateways) in `libroqr-ffi.so`.
+- `jni/` JNI bindings (`org.red5.roqr`) in `libroqr-jni.so` + `roqr.jar`,
+  built when `-DROQR_BUILD_JNI=ON` and a JDK is present.
+- `examples/java/` Java publish/play samples (see `examples/java/README.md`).
+- Android: see `cmake/android-jni.md` for the NDK cross-compile.
+
+Native callbacks (`MessageListener`) fire on a native thread the binding
+attaches to the JVM for the call; do not block in them.
+
 License: Apache-2.0.

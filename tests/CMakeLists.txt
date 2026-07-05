@@ -60,6 +60,14 @@ if(ROQR_BUILD_QUIC)
       ROQR_TEST_CERT_DIR="${ROQR_TEST_CERT_DIR}")
     target_link_libraries(roqr-integration-tests PRIVATE
       roqr-relayd-lib roqr-quic roqr-gateway Catch2::Catch2WithMain)
+
+    if(ROQR_BUILD_FFI AND TARGET roqr-ffi)
+      target_sources(roqr-integration-tests PRIVATE
+        integration/ffi_client_test.cpp
+        integration/ffi_gateway_test.cpp)
+      target_link_libraries(roqr-integration-tests PRIVATE roqr-ffi)
+    endif()
+
     catch_discover_tests(roqr-integration-tests PROPERTIES TIMEOUT 60)
   endif()
 endif()
@@ -91,4 +99,16 @@ if(ROQR_BUILD_EXAMPLES)
 
   add_dependencies(roqr-relayd roqr-testcerts)  # ensure certs exist for e2e
   add_subdirectory(e2e)
+endif()
+
+if(ROQR_BUILD_FFI AND TARGET roqr-ffi)
+  add_executable(roqr-ffi-tests
+    ffi/ffi_smoke_test.cpp
+  )
+  target_link_libraries(roqr-ffi-tests PRIVATE roqr-ffi Catch2::Catch2WithMain)
+  catch_discover_tests(roqr-ffi-tests PROPERTIES TIMEOUT 60)
+endif()
+
+if(ROQR_BUILD_JNI AND TARGET roqr-jni)
+  add_subdirectory(jni)
 endif()

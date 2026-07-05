@@ -9,7 +9,8 @@
         "ROQR_BUILD_TESTS": "ON",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "ROQR_BUILD_QUIC": "ON",
-        "ROQR_BUILD_TOOLS": "ON"
+        "ROQR_BUILD_TOOLS": "ON",
+        "ROQR_BUILD_JNI": "ON"
       }
     },
     {

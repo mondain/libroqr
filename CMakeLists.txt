@@ -21,6 +21,17 @@ option(ROQR_BUILD_QUIC "Build the picoquic transport (needs picoquic)" OFF)
 option(ROQR_BUILD_TOOLS "Build tools (roqr-relayd; needs ROQR_BUILD_QUIC)" OFF)
 option(ROQR_BUILD_RTMP "Build the RTMP/AMF gateway module" ON)
 option(ROQR_BUILD_EXAMPLES "Build gateway library and example apps" ON)
+option(ROQR_BUILD_FFI "Build the C FFI shared library" ON)
+option(ROQR_BUILD_JNI "Build JNI bindings (needs a JDK)" OFF)
+
+# The SHARED roqr-ffi library links the static libraries (and picoquic), so
+# they must be position-independent — but only when FFI is actually built.
+# Setting this directory-scoped variable before add_subdirectory propagates
+# it to every subproject (including the picoquic add_subdirectory), so the
+# core-only build (no FFI) is unaffected.
+if(ROQR_BUILD_FFI AND ROQR_BUILD_QUIC AND ROQR_BUILD_RTMP)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
 
 add_subdirectory(core)
 
@@ -55,6 +66,26 @@ if(ROQR_BUILD_TOOLS)
     message(FATAL_ERROR "ROQR_BUILD_TOOLS requires ROQR_BUILD_QUIC and ROQR_BUILD_RTMP")
   endif()
   add_subdirectory(tools/relayd)
+endif()
+
+if(ROQR_BUILD_FFI)
+  if(ROQR_BUILD_QUIC AND ROQR_BUILD_RTMP)
+    add_subdirectory(ffi)
+  else()
+    message(STATUS "ROQR_BUILD_FFI needs QUIC and RTMP; skipping FFI in this config")
+  endif()
+endif()
+
+if(ROQR_BUILD_JNI)
+  if(NOT TARGET roqr-ffi)
+    message(FATAL_ERROR "ROQR_BUILD_JNI requires the FFI library (ROQR_BUILD_FFI plus QUIC+RTMP)")
+  endif()
+  find_package(JNI)
+  if(JNI_FOUND OR ANDROID)
+    add_subdirectory(jni)
+  else()
+    message(WARNING "JNI not found; skipping roqr-jni")
+  endif()
 endif()
 
 if(ROQR_BUILD_TESTS)
