@@ -14,8 +14,13 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 option(ROQR_BUILD_TESTS "Build unit tests" ON)
 option(ROQR_BUILD_QUIC "Build the picoquic transport (needs picoquic)" OFF)
 option(ROQR_BUILD_TOOLS "Build tools (roqr-relayd; needs ROQR_BUILD_QUIC)" OFF)
+option(ROQR_BUILD_RTMP "Build the RTMP/AMF gateway module" ON)
 
 add_subdirectory(core)
+
+if(ROQR_BUILD_RTMP)
+  add_subdirectory(rtmp)
+endif()
 
 if(ROQR_BUILD_QUIC)
   find_package(Picoquic REQUIRED)

@@ -60,3 +60,18 @@ if(ROQR_BUILD_QUIC)
     catch_discover_tests(roqr-integration-tests PROPERTIES TIMEOUT 60)
   endif()
 endif()
+
+if(ROQR_BUILD_RTMP)
+  add_executable(roqr-rtmp-tests
+    rtmp/amf0_encode_test.cpp
+    rtmp/amf0_decode_test.cpp
+    rtmp/handshake_test.cpp
+    rtmp/chunk_reader_test.cpp
+    rtmp/chunk_writer_test.cpp
+    rtmp/classify_legacy_test.cpp
+    rtmp/classify_ertmp_test.cpp
+    rtmp/server_session_test.cpp
+  )
+  target_link_libraries(roqr-rtmp-tests PRIVATE roqr-rtmp Catch2::Catch2WithMain)
+  catch_discover_tests(roqr-rtmp-tests PROPERTIES TIMEOUT 60)
+endif()
