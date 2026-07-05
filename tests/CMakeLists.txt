@@ -63,7 +63,8 @@ if(ROQR_BUILD_QUIC)
 
     if(ROQR_BUILD_FFI AND TARGET roqr-ffi)
       target_sources(roqr-integration-tests PRIVATE
-        integration/ffi_client_test.cpp)
+        integration/ffi_client_test.cpp
+        integration/ffi_gateway_test.cpp)
       target_link_libraries(roqr-integration-tests PRIVATE roqr-ffi)
     endif()
 

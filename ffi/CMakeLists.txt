@@ -1,5 +1,6 @@
 add_library(roqr-ffi SHARED
   src/roqr_ffi.cpp
+  src/roqr_rtmp_ffi.cpp
 )
 
 target_include_directories(roqr-ffi PUBLIC
