@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core:
+    name: core-only (no picoquic)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build
+      - name: Configure (core only)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+             -DROQR_BUILD_QUIC=OFF -DROQR_BUILD_RTMP=ON
+             -DROQR_BUILD_EXAMPLES=OFF -DROQR_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  full:
+    name: full (${{ matrix.cc }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { cc: gcc, cxx: g++ }
+          - { cc: clang, cxx: clang++ }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y
+             cmake g++ clang ninja-build libssl-dev ffmpeg
+      - name: Build picoquic deps
+        run: eval "$(scripts/setup_picoquic_deps.sh)"; echo "$ROQR_PICOQUIC_SOURCE_DIR"
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          eval "$(scripts/setup_picoquic_deps.sh)"
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
+            -DROQR_BUILD_QUIC=ON -DROQR_BUILD_RTMP=ON \
+            -DROQR_BUILD_TOOLS=ON -DROQR_BUILD_EXAMPLES=ON \
+            -DROQR_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

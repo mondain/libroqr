@@ -51,12 +51,15 @@ if(ROQR_BUILD_QUIC)
       integration/flow_gating_test.cpp
       integration/relay_test.cpp
       integration/flow_reset_test.cpp
+      integration/relay_media_test.cpp
+      integration/ingest_test.cpp
+      integration/egress_test.cpp
     )
     add_dependencies(roqr-integration-tests roqr-testcerts)
     target_compile_definitions(roqr-integration-tests PRIVATE
       ROQR_TEST_CERT_DIR="${ROQR_TEST_CERT_DIR}")
     target_link_libraries(roqr-integration-tests PRIVATE
-      roqr-relayd-lib roqr-quic Catch2::Catch2WithMain)
+      roqr-relayd-lib roqr-quic roqr-gateway Catch2::Catch2WithMain)
     catch_discover_tests(roqr-integration-tests PROPERTIES TIMEOUT 60)
   endif()
 endif()
@@ -74,4 +77,18 @@ if(ROQR_BUILD_RTMP)
   )
   target_link_libraries(roqr-rtmp-tests PRIVATE roqr-rtmp Catch2::Catch2WithMain)
   catch_discover_tests(roqr-rtmp-tests PROPERTIES TIMEOUT 60)
+endif()
+
+if(ROQR_BUILD_EXAMPLES)
+  add_executable(roqr-gateway-tests
+    gateway/bridge_test.cpp
+    gateway/rtmp_commands_test.cpp
+    gateway/media_router_test.cpp
+    gateway/gap_recovery_test.cpp
+  )
+  target_link_libraries(roqr-gateway-tests PRIVATE roqr-gateway roqr-relayd-lib Catch2::Catch2WithMain)
+  catch_discover_tests(roqr-gateway-tests PROPERTIES TIMEOUT 60)
+
+  add_dependencies(roqr-relayd roqr-testcerts)  # ensure certs exist for e2e
+  add_subdirectory(e2e)
 endif()
