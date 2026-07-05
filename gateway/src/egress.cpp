@@ -122,10 +122,12 @@ bool EgressGateway::start(const EgressOptions& options) {
                                  const std::string&, bool publishing) {
                 if (!publishing) impl->on_player_play();  // a play request
             };
-            e.on_close = [impl](roqr::rtmp::ServerSession&) {
+            e.on_close = [impl](roqr::rtmp::ServerSession& s) {
                 std::lock_guard lock(impl->player_mutex);
-                impl->player = nullptr;
-                impl->player_ready = false;
+                if (impl->player == &s) {
+                    impl->player = nullptr;
+                    impl->player_ready = false;
+                }
             };
             return e;
         });
