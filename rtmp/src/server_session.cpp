@@ -75,6 +75,10 @@ struct ServerSession::Impl {
     // thread-safe; command replies come from the session thread).
     std::mutex write_mutex;
     ChunkWriter writer;
+    // Guards app/stream_name/publishing: written on the session thread in
+    // handle_command, read from the public accessors which may be called
+    // from other threads.
+    mutable std::mutex state_mutex;
     std::string app;
     std::string stream_name;
     bool publishing = false;
@@ -116,6 +120,7 @@ struct ServerSession::Impl {
             if (values->size() > 2) {
                 if (const Amf0Value* a = (*values)[2].find("app")) {
                     if (a->type() == Amf0Value::Type::String) {
+                        std::lock_guard state_lock(state_mutex);
                         app = a->as_string();
                     }
                 }
@@ -143,11 +148,14 @@ struct ServerSession::Impl {
                 {Amf0Value::string("_result"), Amf0Value::number(txn),
                  Amf0Value::null(), Amf0Value::number(1)}));
         } else if (name == "publish") {
-            if (values->size() > 3 &&
-                (*values)[3].type() == Amf0Value::Type::String) {
-                stream_name = (*values)[3].as_string();
+            {
+                std::lock_guard state_lock(state_mutex);
+                if (values->size() > 3 &&
+                    (*values)[3].type() == Amf0Value::Type::String) {
+                    stream_name = (*values)[3].as_string();
+                }
+                publishing = true;
             }
-            publishing = true;
             send_message(make_command(
                 5, 1,
                 {Amf0Value::string("onStatus"), Amf0Value::number(0),
@@ -156,9 +164,12 @@ struct ServerSession::Impl {
                              "Publishing " + stream_name)}));
             if (events.on_stream) events.on_stream(self, stream_name, true);
         } else if (name == "play") {
-            if (values->size() > 3 &&
-                (*values)[3].type() == Amf0Value::Type::String) {
-                stream_name = (*values)[3].as_string();
+            {
+                std::lock_guard state_lock(state_mutex);
+                if (values->size() > 3 &&
+                    (*values)[3].type() == Amf0Value::Type::String) {
+                    stream_name = (*values)[3].as_string();
+                }
             }
             // User Control Stream Begin (event 0) for stream 1.
             std::vector<uint8_t> begin = {0x00, 0x00};
@@ -284,11 +295,18 @@ void ServerSession::close() {
     ::shutdown(impl_->fd, SHUT_RDWR);
 }
 
-const std::string& ServerSession::app() const { return impl_->app; }
-const std::string& ServerSession::stream_name() const {
+std::string ServerSession::app() const {
+    std::lock_guard lock(impl_->state_mutex);
+    return impl_->app;
+}
+std::string ServerSession::stream_name() const {
+    std::lock_guard lock(impl_->state_mutex);
     return impl_->stream_name;
 }
-bool ServerSession::publishing() const { return impl_->publishing; }
+bool ServerSession::publishing() const {
+    std::lock_guard lock(impl_->state_mutex);
+    return impl_->publishing;
+}
 
 struct Listener::Impl {
     int listen_fd = -1;
@@ -344,12 +362,18 @@ bool Listener::start(uint16_t port, EventsFactory factory) {
 void Listener::stop() {
     if (!impl_->running) return;
     impl_->running = false;
+    // Only shutdown() here to unblock a possibly-blocked accept() on this
+    // fd; close() must wait until after the accept thread has joined,
+    // otherwise the fd number could be reused by another thread while
+    // accept() is still referencing it (unspecified behavior per POSIX).
     if (impl_->listen_fd >= 0) {
         ::shutdown(impl_->listen_fd, SHUT_RDWR);
+    }
+    if (impl_->accept_thread.joinable()) impl_->accept_thread.join();
+    if (impl_->listen_fd >= 0) {
         ::close(impl_->listen_fd);
         impl_->listen_fd = -1;
     }
-    if (impl_->accept_thread.joinable()) impl_->accept_thread.join();
     {
         std::lock_guard lock(impl_->mutex);
         for (auto& s : impl_->sessions) s->close();

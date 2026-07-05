@@ -27,8 +27,9 @@ public:
     void run();        // blocking: handshake, dechunk, dispatch until close
     bool send(const RtmpMessage& msg);  // thread-safe (chunks + writes)
     void close();      // shutdown(fd); run() returns soon after
-    const std::string& app() const;
-    const std::string& stream_name() const;
+    // Thread-safe; values reflect the session thread's latest state.
+    std::string app() const;
+    std::string stream_name() const;
     bool publishing() const;
 
     // Must be called before run(); Listener uses this so the events
