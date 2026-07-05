@@ -55,6 +55,20 @@ TEST_CASE("modex blocks are skipped to reach the effective packet type") {
     CHECK(info.fourcc == fourcc('h', 'v', 'c', '1'));
 }
 
+TEST_CASE("modex 256-escape size uses a u16 length") {
+    // packetType 7 ModEx; size byte 0xFF -> 256 -> read u16be+1 for the
+    // real size. Use u16 0x0000 -> size 1; skip 1 byte; then effective
+    // packetType 1 (CodedFrames) low nibble, then fourcc.
+    const uint8_t p[] = {0x97, 0xFF, 0x00, 0x00, 0x00,
+                         0x01, 'h', 'v', 'c', '1', 0xAB};
+    auto info = classify_video(p);
+    CHECK(info.enhanced);
+    CHECK(info.cls == MediaClass::Keyframe);  // frameType 1
+    CHECK(info.fourcc ==
+          (static_cast<uint32_t>('h') << 24 | static_cast<uint32_t>('v') << 16 |
+           static_cast<uint32_t>('c') << 8 | '1'));
+}
+
 TEST_CASE("multitrack is conservative and forces stream carriage") {
     // packetType 6 (Multitrack); next byte: AvMultitrackType 0 (OneTrack)
     // << 4 | inner packetType 1; then shared fourcc.

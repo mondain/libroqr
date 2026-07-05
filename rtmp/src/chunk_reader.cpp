@@ -1,5 +1,7 @@
 #include "roqr/rtmp/chunk_reader.hpp"
 
+#include <algorithm>
+
 namespace roqr::rtmp {
 
 namespace {
@@ -38,6 +40,7 @@ void ChunkReader::finalize(uint32_t csid, CsidState& st) {
     m.type = st.type;
     m.message_stream_id = st.message_stream_id;
     m.chunk_stream_id = csid;
+    assembling_bytes_ -= std::min<uint64_t>(assembling_bytes_, st.assembling.size());
     m.payload = std::move(st.assembling);
     st.assembling.clear();
 
@@ -52,6 +55,12 @@ void ChunkReader::finalize(uint32_t csid, CsidState& st) {
         const uint32_t target = be32(m.payload.data());
         auto it = streams_.find(target);
         if (it != streams_.end()) {
+            // The committed budget for this csid's incomplete assembly is
+            // its declared length: bytes already buffered plus bytes still
+            // remaining to arrive.
+            const uint64_t committed =
+                it->second.assembling.size() + it->second.remaining;
+            assembling_bytes_ -= std::min<uint64_t>(assembling_bytes_, committed);
             it->second.assembling.clear();
             it->second.remaining = 0;
             it->second.have_header = false;
@@ -128,6 +137,17 @@ void ChunkReader::parse() {
                 failed_ = true;
                 return;
             }
+            // Aggregate cap: refuse to start a new assembly if its declared
+            // length, combined with everything already committed to other
+            // in-progress csids, would exceed the outstanding budget. This
+            // stops a flood of many chunk stream IDs each starting a large
+            // message from driving unbounded memory use before any of them
+            // is confirmed to actually carry that much data.
+            if (assembling_bytes_ + static_cast<uint64_t>(prospective_remaining) >
+                kMaxOutstanding) {
+                failed_ = true;
+                return;
+            }
         }
         const uint32_t take = prospective_remaining < chunk_size_
                                    ? prospective_remaining
@@ -161,7 +181,10 @@ void ChunkReader::parse() {
         if (starting_new) {
             st.remaining = prospective_remaining;
             st.assembling.clear();
-            st.assembling.reserve(st.remaining);
+            // Do not reserve st.remaining: it is attacker-controlled (up to
+            // kMaxMessageSize) and only a handful of bytes may ever actually
+            // arrive. Let the vector grow organically as bytes are appended.
+            assembling_bytes_ += prospective_remaining;
         }
 
         st.assembling.insert(st.assembling.end(),

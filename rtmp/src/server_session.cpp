@@ -64,6 +64,18 @@ std::vector<uint8_t> u32be(uint32_t v) {
             static_cast<uint8_t>(v >> 8), static_cast<uint8_t>(v)};
 }
 
+// A throwing gateway callback (on_connect/on_stream/on_message/on_close)
+// must not be allowed to escape run()/handle_command and terminate the
+// session thread. Swallow and continue; the session is otherwise unaware
+// of the failure.
+template <class F>
+void safe_call(F&& f) {
+    try {
+        f();
+    } catch (...) {
+    }
+}
+
 }  // namespace
 
 struct ServerSession::Impl {
@@ -141,7 +153,9 @@ struct ServerSession::Impl {
                 3, 0,
                 {Amf0Value::string("_result"), Amf0Value::number(txn), props,
                  info}));
-            if (events.on_connect) events.on_connect(self, app);
+            if (events.on_connect) {
+                safe_call([&] { events.on_connect(self, app); });
+            }
         } else if (name == "createStream") {
             send_message(make_command(
                 3, 0,
@@ -162,7 +176,9 @@ struct ServerSession::Impl {
                  Amf0Value::null(),
                  status_info("NetStream.Publish.Start",
                              "Publishing " + stream_name)}));
-            if (events.on_stream) events.on_stream(self, stream_name, true);
+            if (events.on_stream) {
+                safe_call([&] { events.on_stream(self, stream_name, true); });
+            }
         } else if (name == "play") {
             {
                 std::lock_guard state_lock(state_mutex);
@@ -188,9 +204,13 @@ struct ServerSession::Impl {
                  Amf0Value::null(),
                  status_info("NetStream.Play.Start",
                              "Playing " + stream_name)}));
-            if (events.on_stream) events.on_stream(self, stream_name, false);
+            if (events.on_stream) {
+                safe_call([&] { events.on_stream(self, stream_name, false); });
+            }
         } else {
-            if (events.on_message) events.on_message(self, m);
+            if (events.on_message) {
+                safe_call([&] { events.on_message(self, m); });
+            }
         }
     }
 
@@ -216,7 +236,9 @@ struct ServerSession::Impl {
                        m->type == kTypeSetPeerBandwidth) {
                 // Protocol control: reader already applied what matters.
             } else {
-                if (events.on_message) events.on_message(self, *m);
+                if (events.on_message) {
+                    safe_call([&] { events.on_message(self, *m); });
+                }
             }
         }
     }
@@ -239,18 +261,24 @@ void ServerSession::run() {
     while (!impl_->handshake.done()) {
         const ssize_t n = ::recv(impl_->fd, buf, sizeof(buf), 0);
         if (n <= 0 || impl_->closing) {
-            if (impl_->events.on_close) impl_->events.on_close(*this);
+            if (impl_->events.on_close) {
+                safe_call([&] { impl_->events.on_close(*this); });
+            }
             return;
         }
         std::vector<uint8_t> out;
         if (!impl_->handshake.feed(
                 std::span<const uint8_t>(buf, static_cast<size_t>(n)), out)) {
             ::shutdown(impl_->fd, SHUT_RDWR);
-            if (impl_->events.on_close) impl_->events.on_close(*this);
+            if (impl_->events.on_close) {
+                safe_call([&] { impl_->events.on_close(*this); });
+            }
             return;
         }
         if (!out.empty() && !send_all(impl_->fd, out)) {
-            if (impl_->events.on_close) impl_->events.on_close(*this);
+            if (impl_->events.on_close) {
+                safe_call([&] { impl_->events.on_close(*this); });
+            }
             return;
         }
     }
@@ -265,7 +293,9 @@ void ServerSession::run() {
         impl_->reader.feed(leftover);
         if (impl_->reader.failed()) {
             ::shutdown(impl_->fd, SHUT_RDWR);
-            if (impl_->events.on_close) impl_->events.on_close(*this);
+            if (impl_->events.on_close) {
+                safe_call([&] { impl_->events.on_close(*this); });
+            }
             return;
         }
         impl_->drain_ready(*this);
@@ -283,7 +313,9 @@ void ServerSession::run() {
         impl_->maybe_ack();
     }
     ::shutdown(impl_->fd, SHUT_RDWR);
-    if (impl_->events.on_close) impl_->events.on_close(*this);
+    if (impl_->events.on_close) {
+        safe_call([&] { impl_->events.on_close(*this); });
+    }
 }
 
 bool ServerSession::send(const RtmpMessage& msg) {

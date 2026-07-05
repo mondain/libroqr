@@ -226,6 +226,47 @@ TEST_CASE("bare fmt3 after abort fails instead of reusing stale headers") {
     CHECK(r.failed());
 }
 
+TEST_CASE("aggregate outstanding assembly is bounded") {
+    // Many csids each declaring a large in-progress message must fail
+    // before exhausting memory, not reserve gigabytes.
+    //
+    // Force the chunk size down to 1 first: at the default chunk size
+    // (128) a single 8MiB-declared message would keep consuming 128-byte
+    // slices of *whatever follows in the buffer* as its own body (that is
+    // correct chunking behavior for a real multi-chunk message), which
+    // would swallow the other csids' headers instead of leaving 61
+    // independent, genuinely-incomplete messages outstanding. Chunk size
+    // 1 makes each new message's single body byte fully self-contained.
+    std::vector<uint8_t> wire;
+    put_fmt0(2, 0, 4, 1, 0, wire);  // Set Chunk Size control message
+    put_u32be(1, wire);
+    for (uint32_t csid = 3; csid < 64; ++csid) {
+        // fmt0 header, csid<64 uses 1-byte basic header.
+        // Declare length 8MiB, send only 1 body byte.
+        put_fmt0(csid, 0, 8u * 1024 * 1024, 9, 1, wire);
+        wire.push_back(0x00);  // one body byte; message stays incomplete
+    }
+    ChunkReader r;
+    r.feed(wire);
+    CHECK(r.failed());  // bounded, did not attempt to reserve ~GiB
+}
+
+TEST_CASE("fmt3 new message after fmt0 repeats the fmt0 timestamp") {
+    std::vector<uint8_t> wire;
+    put_fmt0(4, 500, 1, 9, 1, wire);
+    wire.push_back(0x01);
+    wire.push_back(0xC0 | 4);  // fmt3 new message on csid 4
+    wire.push_back(0x02);
+    ChunkReader r;
+    r.feed(wire);
+    auto m1 = r.next();
+    auto m2 = r.next();
+    REQUIRE(m1.has_value());
+    REQUIRE(m2.has_value());
+    CHECK(m1->timestamp == 500);
+    CHECK(m2->timestamp == 500);  // fmt0 delta is 0, so fmt3-new repeats 500
+}
+
 TEST_CASE("oversized message length and bad chunk size fail") {
     std::vector<uint8_t> wire;
     put_fmt0(4, 0, ChunkReader::kMaxMessageSize + 1, 9, 1, wire);

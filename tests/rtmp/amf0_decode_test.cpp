@@ -110,3 +110,13 @@ TEST_CASE("decode_all parses a command payload sequence") {
     wire.push_back(0x0F);  // trailing garbage marker
     CHECK_FALSE(amf0_decode_all(wire).has_value());
 }
+
+TEST_CASE("decode_all on empty input yields an empty vector") {
+    auto v = amf0_decode_all({});
+    REQUIRE(v.has_value());
+    CHECK(v->empty());
+}
+
+TEST_CASE("number and date with equal magnitude are not equal") {
+    CHECK_FALSE(Amf0Value::number(1.0) == Amf0Value::date(1.0, 0));
+}

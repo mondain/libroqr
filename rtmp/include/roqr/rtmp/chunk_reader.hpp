@@ -17,6 +17,12 @@ namespace roqr::rtmp {
 class ChunkReader {
 public:
     static constexpr uint32_t kMaxMessageSize = 8 * 1024 * 1024;  // must be < 0xFFFFFF+1 so a 24-bit length can exceed it
+    // Aggregate cap on the sum of declared lengths of all in-progress
+    // (not-yet-finalized) message assemblies across every chunk stream ID.
+    // Bounds worst-case memory even when many csids each start a large
+    // message concurrently, independent of how much of each has actually
+    // arrived on the wire.
+    static constexpr uint64_t kMaxOutstanding = 32 * 1024 * 1024;
 
     void feed(std::span<const uint8_t> data);
     std::optional<RtmpMessage> next();
@@ -43,6 +49,10 @@ private:
     std::deque<RtmpMessage> ready_;
     std::map<uint32_t, CsidState> streams_;
     uint32_t chunk_size_ = kDefaultChunkSize;
+    // Sum of declared lengths committed to in-progress assemblies (see
+    // kMaxOutstanding). Incremented when a message starts assembling,
+    // decremented when it finalizes or is dropped by Abort.
+    uint64_t assembling_bytes_ = 0;
     bool failed_ = false;
 };
 
