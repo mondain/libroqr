@@ -65,3 +65,20 @@ TEST_CASE("responder rejects a C2 that does not echo S1") {
     std::vector<uint8_t> none;
     CHECK_FALSE(server.feed(forged, none));
 }
+
+TEST_CASE("bytes pipelined after C2 are recoverable as leftover") {
+    HandshakeInitiator client;
+    HandshakeResponder server;
+    std::vector<uint8_t> to_client;
+    REQUIRE(server.feed(client.start(), to_client));
+    std::vector<uint8_t> c2;
+    REQUIRE(client.feed(to_client, c2));
+    // Pipeline chunk bytes right behind C2 in one feed.
+    c2.insert(c2.end(), {0x03, 0x00, 0x00, 0x01});
+    std::vector<uint8_t> none;
+    REQUIRE(server.feed(c2, none));
+    REQUIRE(server.done());
+    CHECK(server.take_leftover() ==
+          std::vector<uint8_t>{0x03, 0x00, 0x00, 0x01});
+    CHECK(server.take_leftover().empty());  // cleared after take
+}

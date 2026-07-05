@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <random>
+#include <utility>
 
 namespace roqr::rtmp {
 
@@ -70,6 +71,10 @@ bool HandshakeResponder::feed(std::span<const uint8_t> in,
     return true;
 }
 
+std::vector<uint8_t> HandshakeResponder::take_leftover() {
+    return std::exchange(buffer_, {});
+}
+
 std::vector<uint8_t> HandshakeInitiator::start() {
     c1_ = make_packet();
     std::vector<uint8_t> out;
@@ -82,7 +87,12 @@ std::vector<uint8_t> HandshakeInitiator::start() {
 bool HandshakeInitiator::feed(std::span<const uint8_t> in,
                               std::vector<uint8_t>& out) {
     if (state_ == State::Failed) return false;
-    if (state_ != State::WaitS0S1S2) return state_ == State::Done;
+    if (state_ != State::WaitS0S1S2) {
+        if (state_ == State::Done) {
+            buffer_.insert(buffer_.end(), in.begin(), in.end());
+        }
+        return state_ == State::Done;
+    }
     buffer_.insert(buffer_.end(), in.begin(), in.end());
 
     if (!buffer_.empty() && buffer_[0] != kRtmpVersion) {
@@ -105,6 +115,10 @@ bool HandshakeInitiator::feed(std::span<const uint8_t> in,
                   buffer_.begin() + 1 + 2 * kHandshakePacketSize);
     state_ = State::Done;
     return true;
+}
+
+std::vector<uint8_t> HandshakeInitiator::take_leftover() {
+    return std::exchange(buffer_, {});
 }
 
 }  // namespace roqr::rtmp

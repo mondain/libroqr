@@ -17,6 +17,9 @@ class HandshakeResponder {
 public:
     bool feed(std::span<const uint8_t> in, std::vector<uint8_t>& out);
     bool done() const { return state_ == State::Done; }
+    // Returns and clears any bytes received beyond the handshake (e.g.
+    // pipelined RTMP chunk data). Call after done().
+    std::vector<uint8_t> take_leftover();
 
 private:
     enum class State { WaitC0C1, WaitC2, Done, Failed };
@@ -30,6 +33,9 @@ public:
     std::vector<uint8_t> start();
     bool feed(std::span<const uint8_t> in, std::vector<uint8_t>& out);
     bool done() const { return state_ == State::Done; }
+    // Returns and clears any bytes received beyond the handshake (e.g.
+    // pipelined RTMP chunk data). Call after done().
+    std::vector<uint8_t> take_leftover();
 
 private:
     enum class State { Idle, WaitS0S1S2, Done, Failed };
