@@ -53,6 +53,7 @@ if(ROQR_BUILD_QUIC)
       integration/flow_reset_test.cpp
       integration/relay_media_test.cpp
       integration/ingest_test.cpp
+      integration/egress_test.cpp
     )
     add_dependencies(roqr-integration-tests roqr-testcerts)
     target_compile_definitions(roqr-integration-tests PRIVATE

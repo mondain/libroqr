@@ -2,6 +2,7 @@ add_library(roqr-gateway STATIC
   src/bridge.cpp
   src/rtmp_commands.cpp
   src/ingest.cpp
+  src/egress.cpp
 )
 
 target_include_directories(roqr-gateway PUBLIC
