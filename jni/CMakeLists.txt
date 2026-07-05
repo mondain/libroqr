@@ -14,6 +14,10 @@ add_jar(roqr-jar
   SOURCES
     java/org/red5/roqr/RoqrNative.java
     java/org/red5/roqr/package-info.java
+    java/org/red5/roqr/DeliveryMode.java
+    java/org/red5/roqr/Frame.java
+    java/org/red5/roqr/MessageListener.java
+    java/org/red5/roqr/RoqrClient.java
   OUTPUT_NAME roqr)
 
 # Expose the jar path and the jni lib dir to the test subdirectory.
