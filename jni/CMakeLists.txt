@@ -18,6 +18,8 @@ add_jar(roqr-jar
     java/org/red5/roqr/Frame.java
     java/org/red5/roqr/MessageListener.java
     java/org/red5/roqr/RoqrClient.java
+    java/org/red5/roqr/IngestGateway.java
+    java/org/red5/roqr/EgressGateway.java
   OUTPUT_NAME roqr)
 
 # Expose the jar path and the jni lib dir to the test subdirectory.

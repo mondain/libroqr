@@ -2,6 +2,7 @@
 
 extern "C" {
 #include "roqr/roqr.h"
+#include "roqr/roqr_rtmp.h"
 }
 
 #include <cstdint>
@@ -205,6 +206,77 @@ JNIEXPORT void JNICALL Java_org_red5_roqr_RoqrClient_nativeDestroy(
     if (jc->listener != nullptr) env->DeleteGlobalRef(jc->listener);
     if (jc->frame_class != nullptr) env->DeleteGlobalRef(jc->frame_class);
     delete jc;
+}
+
+JNIEXPORT jlong JNICALL
+Java_org_red5_roqr_IngestGateway_nativeCreate(JNIEnv*, jclass) {
+    return reinterpret_cast<jlong>(roqr_ingest_create());
+}
+
+JNIEXPORT jboolean JNICALL Java_org_red5_roqr_IngestGateway_nativeStart(
+    JNIEnv* env, jclass, jlong h, jint rtmp_port, jstring host, jint roqr_port,
+    jboolean insecure) {
+    const char* chost = env->GetStringUTFChars(host, nullptr);
+    const roqr_error rc = roqr_ingest_start(
+        reinterpret_cast<roqr_ingest*>(h), static_cast<uint16_t>(rtmp_port),
+        chost, static_cast<uint16_t>(roqr_port), insecure ? 1 : 0);
+    env->ReleaseStringUTFChars(host, chost);
+    return rc == ROQR_OK ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_org_red5_roqr_IngestGateway_nativeWaitPublishing(JNIEnv*, jclass, jlong h,
+                                                      jint timeout_ms) {
+    return roqr_ingest_wait_publishing(reinterpret_cast<roqr_ingest*>(h),
+                                       timeout_ms)
+               ? JNI_TRUE
+               : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL Java_org_red5_roqr_IngestGateway_nativeStop(
+    JNIEnv*, jclass, jlong h) {
+    roqr_ingest_stop(reinterpret_cast<roqr_ingest*>(h));
+}
+
+JNIEXPORT void JNICALL Java_org_red5_roqr_IngestGateway_nativeDestroy(
+    JNIEnv*, jclass, jlong h) {
+    roqr_ingest_destroy(reinterpret_cast<roqr_ingest*>(h));
+}
+
+JNIEXPORT jlong JNICALL
+Java_org_red5_roqr_EgressGateway_nativeCreate(JNIEnv*, jclass) {
+    return reinterpret_cast<jlong>(roqr_egress_create());
+}
+
+JNIEXPORT jboolean JNICALL Java_org_red5_roqr_EgressGateway_nativeStart(
+    JNIEnv* env, jclass, jlong h, jint rtmp_port, jstring host, jint roqr_port,
+    jstring stream, jboolean insecure) {
+    const char* chost = env->GetStringUTFChars(host, nullptr);
+    const char* cstream = env->GetStringUTFChars(stream, nullptr);
+    const roqr_error rc = roqr_egress_start(
+        reinterpret_cast<roqr_egress*>(h), static_cast<uint16_t>(rtmp_port),
+        chost, static_cast<uint16_t>(roqr_port), cstream, insecure ? 1 : 0);
+    env->ReleaseStringUTFChars(host, chost);
+    env->ReleaseStringUTFChars(stream, cstream);
+    return rc == ROQR_OK ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_org_red5_roqr_EgressGateway_nativeWaitPlaying(
+    JNIEnv*, jclass, jlong h, jint timeout_ms) {
+    return roqr_egress_wait_playing(reinterpret_cast<roqr_egress*>(h),
+                                    timeout_ms)
+               ? JNI_TRUE
+               : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL Java_org_red5_roqr_EgressGateway_nativeStop(
+    JNIEnv*, jclass, jlong h) {
+    roqr_egress_stop(reinterpret_cast<roqr_egress*>(h));
+}
+
+JNIEXPORT void JNICALL Java_org_red5_roqr_EgressGateway_nativeDestroy(
+    JNIEnv*, jclass, jlong h) {
+    roqr_egress_destroy(reinterpret_cast<roqr_egress*>(h));
 }
 
 }  // extern "C"
