@@ -82,3 +82,22 @@ TEST_CASE("large csid uses the escape forms and rejects invalid ids") {
     CHECK_FALSE(w.write(msg(1, 0, 9, 1, {0x00}), out));
     CHECK_FALSE(w.write(msg(65600, 0, 9, 1, {0x00}), out));
 }
+
+TEST_CASE("write rejects payloads that overflow the 24-bit length field") {
+    ChunkWriter w;
+    std::vector<uint8_t> out;
+    CHECK_FALSE(w.write(msg(4, 0, 9, 1, std::vector<uint8_t>(0x1000000, 0)),
+                        out));
+    CHECK(out.empty());
+}
+
+TEST_CASE("zero chunk size is rejected") {
+    ChunkWriter w;
+    std::vector<uint8_t> out;
+    w.set_chunk_size(0, out);
+    CHECK(w.chunk_size() == kDefaultChunkSize);
+    CHECK(out.empty());
+
+    ChunkWriter w0(0);
+    CHECK(w0.chunk_size() == kDefaultChunkSize);
+}

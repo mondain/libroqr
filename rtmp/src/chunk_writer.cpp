@@ -43,6 +43,7 @@ void put_basic_header(uint8_t fmt, uint32_t csid, std::vector<uint8_t>& out) {
 
 bool ChunkWriter::write(const RtmpMessage& msg, std::vector<uint8_t>& out) {
     if (msg.chunk_stream_id < 2 || msg.chunk_stream_id > 65599) return false;
+    if (msg.payload.size() > 0xFFFFFF) return false;
 
     const bool extended = msg.timestamp >= 0xFFFFFF;
 
@@ -68,6 +69,8 @@ bool ChunkWriter::write(const RtmpMessage& msg, std::vector<uint8_t>& out) {
 }
 
 void ChunkWriter::set_chunk_size(uint32_t size, std::vector<uint8_t>& out) {
+    if (size == 0 || (size & 0x80000000u) != 0) return;
+
     RtmpMessage m;
     m.chunk_stream_id = 2;
     m.type = kTypeSetChunkSize;
