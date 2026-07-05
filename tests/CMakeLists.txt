@@ -60,6 +60,13 @@ if(ROQR_BUILD_QUIC)
       ROQR_TEST_CERT_DIR="${ROQR_TEST_CERT_DIR}")
     target_link_libraries(roqr-integration-tests PRIVATE
       roqr-relayd-lib roqr-quic roqr-gateway Catch2::Catch2WithMain)
+
+    if(ROQR_BUILD_FFI AND TARGET roqr-ffi)
+      target_sources(roqr-integration-tests PRIVATE
+        integration/ffi_client_test.cpp)
+      target_link_libraries(roqr-integration-tests PRIVATE roqr-ffi)
+    endif()
+
     catch_discover_tests(roqr-integration-tests PROPERTIES TIMEOUT 60)
   endif()
 endif()
