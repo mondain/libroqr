@@ -216,6 +216,7 @@ Java_org_red5_roqr_IngestGateway_nativeCreate(JNIEnv*, jclass) {
 JNIEXPORT jboolean JNICALL Java_org_red5_roqr_IngestGateway_nativeStart(
     JNIEnv* env, jclass, jlong h, jint rtmp_port, jstring host, jint roqr_port,
     jboolean insecure) {
+    if (host == nullptr) return JNI_FALSE;
     const char* chost = env->GetStringUTFChars(host, nullptr);
     const roqr_error rc = roqr_ingest_start(
         reinterpret_cast<roqr_ingest*>(h), static_cast<uint16_t>(rtmp_port),
@@ -251,6 +252,7 @@ Java_org_red5_roqr_EgressGateway_nativeCreate(JNIEnv*, jclass) {
 JNIEXPORT jboolean JNICALL Java_org_red5_roqr_EgressGateway_nativeStart(
     JNIEnv* env, jclass, jlong h, jint rtmp_port, jstring host, jint roqr_port,
     jstring stream, jboolean insecure) {
+    if (host == nullptr || stream == nullptr) return JNI_FALSE;
     const char* chost = env->GetStringUTFChars(host, nullptr);
     const char* cstream = env->GetStringUTFChars(stream, nullptr);
     const roqr_error rc = roqr_egress_start(

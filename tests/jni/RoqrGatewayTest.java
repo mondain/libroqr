@@ -33,6 +33,19 @@ public class RoqrGatewayTest {
             ingest.destroy();
             egress.stop();
             egress.destroy();
+
+            // Null host/stream must be rejected, not crash the JVM.
+            IngestGateway ni = new IngestGateway();
+            if (ni.start(45699, null, relayPort, true)) fail("null ingest host accepted");
+            ni.destroy();
+            EgressGateway ne = new EgressGateway();
+            if (ne.start(45699, "127.0.0.1", relayPort, null, true)) {
+                fail("null egress stream accepted");
+            }
+            if (ne.start(45699, null, relayPort, "cam", true)) {
+                fail("null egress host accepted");
+            }
+            ne.destroy();
             System.out.println("PASS: JNI gateway lifecycle");
         } finally {
             relay.destroy();
