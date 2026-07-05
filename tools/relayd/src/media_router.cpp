@@ -28,6 +28,14 @@ std::vector<void*> MediaRouter::subscribers_for_publisher(void* conn) const {
     return sit->second.subscribers;
 }
 
+bool MediaRouter::is_publisher(void* conn) const {
+    auto it = conn_stream_.find(conn);
+    if (it == conn_stream_.end()) return false;
+    auto sit = streams_.find(it->second);
+    if (sit == streams_.end()) return false;
+    return sit->second.publisher == conn;
+}
+
 void MediaRouter::cache_init(const std::string& stream_name,
                              uint8_t message_type,
                              std::vector<uint8_t> frame_bytes) {

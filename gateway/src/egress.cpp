@@ -18,7 +18,6 @@ namespace roqr::gateway {
 
 struct EgressGateway::Impl {
     EgressOptions options;
-    roqr::quic::Client client;
     roqr::rtmp::Listener listener;
 
     std::mutex mutex;
@@ -40,10 +39,16 @@ struct EgressGateway::Impl {
 
     roqr::gateway::GapTracker gaps;  // draft s8, defined in gap.hpp
 
+    // Declared last: ~Client joins the network thread before the members
+    // its handlers touch are destroyed.
+    roqr::quic::Client client;
+
     static bool is_init(const roqr::rtmp::RtmpMessage& msg) {
-        if (msg.type == 18 || msg.type == 15) return true;
-        if (msg.type == 8 || msg.type == 9) {
-            const auto info = msg.type == 9
+        if (msg.type == roqr::rtmp::kTypeDataAmf0 || msg.type == 15 /* AMF3 data */)
+            return true;
+        if (msg.type == roqr::rtmp::kTypeAudio ||
+            msg.type == roqr::rtmp::kTypeVideo) {
+            const auto info = msg.type == roqr::rtmp::kTypeVideo
                                   ? roqr::rtmp::classify_video(msg.payload)
                                   : roqr::rtmp::classify_audio(msg.payload);
             return info.cls == roqr::rtmp::MediaClass::SequenceHeader;

@@ -12,6 +12,8 @@ public:
     void register_publisher(void* conn, const std::string& stream_name);
     void register_subscriber(void* conn, const std::string& stream_name);
     std::vector<void*> subscribers_for_publisher(void* conn) const;
+    // Returns true iff conn is registered as the publisher of its stream.
+    bool is_publisher(void* conn) const;
     void cache_init(const std::string& stream_name, uint8_t message_type,
                     std::vector<uint8_t> frame_bytes);
     std::vector<std::vector<uint8_t>> init_frames(

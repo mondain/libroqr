@@ -15,10 +15,13 @@ namespace roqr::gateway {
 struct IngestGateway::Impl {
     IngestOptions options;
     roqr::rtmp::Listener listener;
-    roqr::quic::Client client;
     std::mutex mutex;
     std::condition_variable cv;
     bool publishing = false;
+
+    // Declared last: ~Client joins the network thread before the members
+    // its handlers touch are destroyed.
+    roqr::quic::Client client;
 
     roqr::quic::DeliveryMode mode_for(const roqr::rtmp::RtmpMessage& msg) {
         if (msg.type != 8 && msg.type != 9) {

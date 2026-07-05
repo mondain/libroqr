@@ -41,6 +41,15 @@ TEST_CASE("init frames replay in insertion order") {
     CHECK(r.init_frames("missing").empty());
 }
 
+TEST_CASE("is_publisher distinguishes publisher from subscriber") {
+    MediaRouter r;
+    r.register_publisher(handle(1), "cam");
+    r.register_subscriber(handle(2), "cam");
+    CHECK(r.is_publisher(handle(1)));
+    CHECK_FALSE(r.is_publisher(handle(2)));
+    CHECK_FALSE(r.is_publisher(handle(9)));  // unknown
+}
+
 TEST_CASE("remove drops publisher and subscriber state") {
     MediaRouter r;
     r.register_publisher(handle(1), "cam");

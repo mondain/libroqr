@@ -38,9 +38,11 @@ std::string command_stream_name(const roqr::gateway::Command& cmd) {
 
 // Init frames: onMetaData (18/15) and AVC/AAC/E-RTMP sequence headers.
 bool is_init_frame(const roqr::rtmp::RtmpMessage& msg) {
-    if (msg.type == 18 || msg.type == 15) return true;
-    if (msg.type == 8 || msg.type == 9) {
-        const auto info = msg.type == 9
+    if (msg.type == roqr::rtmp::kTypeDataAmf0 || msg.type == 15 /* AMF3 data */)
+        return true;
+    if (msg.type == roqr::rtmp::kTypeAudio ||
+        msg.type == roqr::rtmp::kTypeVideo) {
+        const auto info = msg.type == roqr::rtmp::kTypeVideo
                               ? roqr::rtmp::classify_video(msg.payload)
                               : roqr::rtmp::classify_audio(msg.payload);
         return info.cls == roqr::rtmp::MediaClass::SequenceHeader;
@@ -205,8 +207,10 @@ void Server::Impl::handle_media_frame(picoquic_cnx_t* cnx, uint64_t stream_id,
         return;
     }
 
-    // Media/data: cache init frames, then route to subscribers.
-    if (is_init_frame(msg)) {
+    // Media/data: cache init frames, then route to subscribers. Only the
+    // publisher of a stream may seed its init cache; a subscriber (or an
+    // unregistered cnx) must not be able to poison it.
+    if (is_init_frame(msg) && router.is_publisher(cnx)) {
         std::vector<uint8_t> bytes;
         if (roqr::frame_encode(f, bytes)) {
             router.cache_init(router.stream_of(cnx), msg.type,

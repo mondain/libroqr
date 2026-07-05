@@ -16,7 +16,7 @@ roqr::Frame to_frame(const roqr::rtmp::RtmpMessage& msg, uint64_t flow_id);
 
 // Narrow a RoQR frame back into an RTMP message. Returns false and leaves
 // out untouched if timestamp, message_stream_id, or chunk_stream_id exceeds
-// 0xFFFFFFFF, or message_type exceeds 0xFF (the Width bridge rule).
+// 0xFFFFFFFF (the Width bridge rule).
 bool to_rtmp(const roqr::Frame& frame, roqr::rtmp::RtmpMessage& out);
 
 }  // namespace roqr::gateway

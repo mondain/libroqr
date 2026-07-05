@@ -14,7 +14,8 @@ jobs:
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build
       - name: Configure (core only)
-        run: cmake -S . -B build -DROQR_BUILD_QUIC=OFF -DROQR_BUILD_RTMP=ON
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+             -DROQR_BUILD_QUIC=OFF -DROQR_BUILD_RTMP=ON
              -DROQR_BUILD_EXAMPLES=OFF -DROQR_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build --parallel
