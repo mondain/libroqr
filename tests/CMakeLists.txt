@@ -68,6 +68,7 @@ if(ROQR_BUILD_RTMP)
     rtmp/handshake_test.cpp
     rtmp/chunk_reader_test.cpp
     rtmp/chunk_writer_test.cpp
+    rtmp/classify_legacy_test.cpp
   )
   target_link_libraries(roqr-rtmp-tests PRIVATE roqr-rtmp Catch2::Catch2WithMain)
   catch_discover_tests(roqr-rtmp-tests PROPERTIES TIMEOUT 60)

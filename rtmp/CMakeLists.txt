@@ -3,6 +3,7 @@ add_library(roqr-rtmp STATIC
   src/handshake.cpp
   src/chunk_reader.cpp
   src/chunk_writer.cpp
+  src/classify.cpp
 )
 
 target_include_directories(roqr-rtmp PUBLIC
