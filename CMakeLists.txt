@@ -22,6 +22,7 @@ option(ROQR_BUILD_TOOLS "Build tools (roqr-relayd; needs ROQR_BUILD_QUIC)" OFF)
 option(ROQR_BUILD_RTMP "Build the RTMP/AMF gateway module" ON)
 option(ROQR_BUILD_EXAMPLES "Build gateway library and example apps" ON)
 option(ROQR_BUILD_FFI "Build the C FFI shared library" ON)
+option(ROQR_BUILD_JNI "Build JNI bindings (needs a JDK)" OFF)
 
 # The SHARED roqr-ffi library links the static libraries (and picoquic), so
 # they must be position-independent — but only when FFI is actually built.
@@ -72,6 +73,18 @@ if(ROQR_BUILD_FFI)
     add_subdirectory(ffi)
   else()
     message(STATUS "ROQR_BUILD_FFI needs QUIC and RTMP; skipping FFI in this config")
+  endif()
+endif()
+
+if(ROQR_BUILD_JNI)
+  if(NOT TARGET roqr-ffi)
+    message(FATAL_ERROR "ROQR_BUILD_JNI requires the FFI library (ROQR_BUILD_FFI plus QUIC+RTMP)")
+  endif()
+  find_package(JNI)
+  if(JNI_FOUND)
+    add_subdirectory(jni)
+  else()
+    message(WARNING "JNI not found; skipping roqr-jni")
   endif()
 endif()
 

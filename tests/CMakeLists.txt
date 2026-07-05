@@ -108,3 +108,7 @@ if(ROQR_BUILD_FFI AND TARGET roqr-ffi)
   target_link_libraries(roqr-ffi-tests PRIVATE roqr-ffi Catch2::Catch2WithMain)
   catch_discover_tests(roqr-ffi-tests PROPERTIES TIMEOUT 60)
 endif()
+
+if(ROQR_BUILD_JNI AND TARGET roqr-jni)
+  add_subdirectory(jni)
+endif()
