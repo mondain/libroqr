@@ -52,6 +52,7 @@ if(ROQR_BUILD_QUIC)
       integration/relay_test.cpp
       integration/flow_reset_test.cpp
       integration/relay_media_test.cpp
+      integration/ingest_test.cpp
     )
     add_dependencies(roqr-integration-tests roqr-testcerts)
     target_compile_definitions(roqr-integration-tests PRIVATE
