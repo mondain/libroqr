@@ -188,6 +188,44 @@ TEST_CASE("interleaved chunk streams and abort") {
     CHECK_FALSE(r.failed());
 }
 
+TEST_CASE("fmt1 delta applies once when header and body arrive in separate feeds") {
+    std::vector<uint8_t> wire;
+    put_fmt0(4, 100, 1, 9, 1, wire);
+    wire.push_back(0x01);
+    wire.push_back(0x40 | 4);  // fmt1, csid 4
+    put_u24(40, wire);
+    put_u24(1, wire);
+    wire.push_back(9);
+    wire.push_back(0x02);  // the fmt1 chunk's 1-byte payload
+
+    // Feed everything except the final payload byte, then feed it in two
+    // more calls (empty then the byte) to force repeated partial parses.
+    ChunkReader r;
+    r.feed(std::span<const uint8_t>(wire.data(), wire.size() - 1));
+    REQUIRE(r.next().has_value());        // the fmt0 message (ts 100)
+    CHECK_FALSE(r.next().has_value());    // fmt1 body not yet complete
+    r.feed(std::span<const uint8_t>(wire.data(), 0));  // no-op feed
+    r.feed(std::span<const uint8_t>(wire.data() + wire.size() - 1, 1));
+    auto m = r.next();
+    REQUIRE(m.has_value());
+    CHECK(m->timestamp == 140);  // 100 + 40 exactly once, not 180
+}
+
+TEST_CASE("bare fmt3 after abort fails instead of reusing stale headers") {
+    std::vector<uint8_t> wire;
+    put_fmt0(6, 3, 200, 9, 1, wire);
+    std::vector<uint8_t> junk(128, 0x00);
+    wire.insert(wire.end(), junk.begin(), junk.end());
+    put_fmt0(2, 0, 4, 2, 0, wire);  // Abort csid 6
+    put_u32be(6, wire);
+    wire.push_back(0xC0 | 6);       // bare fmt3 on the aborted csid
+
+    ChunkReader r;
+    r.feed(wire);
+    while (r.next().has_value()) {}
+    CHECK(r.failed());
+}
+
 TEST_CASE("oversized message length and bad chunk size fail") {
     std::vector<uint8_t> wire;
     put_fmt0(4, 0, ChunkReader::kMaxMessageSize + 1, 9, 1, wire);

@@ -54,6 +54,7 @@ void ChunkReader::finalize(uint32_t csid, CsidState& st) {
         if (it != streams_.end()) {
             it->second.assembling.clear();
             it->second.remaining = 0;
+            it->second.have_header = false;
         }
     }
     ready_.push_back(std::move(m));
@@ -104,18 +105,49 @@ void ChunkReader::parse() {
             header_total += 4;
         }
 
-        // Apply the header to the chunk-stream state.
+        // Parse the fmt0/fmt1 header fields into locals only; nothing on
+        // `st` mutates until the full chunk body is confirmed buffered.
+        uint32_t new_length = st.length;
+        uint8_t new_type = st.type;
+        uint32_t new_msid = st.message_stream_id;
+        if (fmt == 0) {
+            new_length = be24(buffer_.data() + pos + 3);
+            new_type = buffer_[pos + 6];
+            new_msid = le32(buffer_.data() + pos + 7);
+        } else if (fmt == 1) {
+            new_length = be24(buffer_.data() + pos + 3);
+            new_type = buffer_[pos + 6];
+        }
+
+        // Compute the prospective remaining/take without mutating st.
+        uint32_t prospective_remaining = st.remaining;
+        if (starting_new) {
+            prospective_remaining =
+                (fmt == 0 || fmt == 1) ? new_length : st.length;
+            if (prospective_remaining > kMaxMessageSize) {
+                failed_ = true;
+                return;
+            }
+        }
+        const uint32_t take = prospective_remaining < chunk_size_
+                                   ? prospective_remaining
+                                   : chunk_size_;
+
+        if (buffer_.size() < header_total + take) return;
+
+        // The full chunk (header + body) is buffered: commit the header to
+        // the chunk-stream state.
         if (fmt == 0) {
             st.timestamp = extended ? ext_value : ts_field;
             st.delta = 0;
-            st.length = be24(buffer_.data() + pos + 3);
-            st.type = buffer_[pos + 6];
-            st.message_stream_id = le32(buffer_.data() + pos + 7);
+            st.length = new_length;
+            st.type = new_type;
+            st.message_stream_id = new_msid;
         } else if (fmt == 1) {
             st.delta = extended ? ext_value : ts_field;
             st.timestamp += st.delta;
-            st.length = be24(buffer_.data() + pos + 3);
-            st.type = buffer_[pos + 6];
+            st.length = new_length;
+            st.type = new_type;
         } else if (fmt == 2) {
             st.delta = extended ? ext_value : ts_field;
             st.timestamp += st.delta;
@@ -127,18 +159,10 @@ void ChunkReader::parse() {
         st.have_header = true;
 
         if (starting_new) {
-            if (st.length > kMaxMessageSize) {
-                failed_ = true;
-                return;
-            }
-            st.remaining = st.length;
+            st.remaining = prospective_remaining;
             st.assembling.clear();
-            st.assembling.reserve(st.length);
+            st.assembling.reserve(st.remaining);
         }
-
-        const uint32_t take =
-            st.remaining < chunk_size_ ? st.remaining : chunk_size_;
-        if (buffer_.size() < header_total + take) return;
 
         st.assembling.insert(st.assembling.end(),
                              buffer_.begin() + static_cast<ptrdiff_t>(header_total),
