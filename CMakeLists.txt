@@ -15,11 +15,20 @@ option(ROQR_BUILD_TESTS "Build unit tests" ON)
 option(ROQR_BUILD_QUIC "Build the picoquic transport (needs picoquic)" OFF)
 option(ROQR_BUILD_TOOLS "Build tools (roqr-relayd; needs ROQR_BUILD_QUIC)" OFF)
 option(ROQR_BUILD_RTMP "Build the RTMP/AMF gateway module" ON)
+option(ROQR_BUILD_EXAMPLES "Build gateway library and example apps" ON)
 
 add_subdirectory(core)
 
 if(ROQR_BUILD_RTMP)
   add_subdirectory(rtmp)
+endif()
+
+if(ROQR_BUILD_EXAMPLES)
+  if(NOT ROQR_BUILD_QUIC OR NOT ROQR_BUILD_RTMP)
+    message(FATAL_ERROR "ROQR_BUILD_EXAMPLES requires ROQR_BUILD_QUIC and ROQR_BUILD_RTMP")
+  endif()
+  add_subdirectory(gateway)
+  add_subdirectory(examples)
 endif()
 
 if(ROQR_BUILD_QUIC)

@@ -75,3 +75,11 @@ if(ROQR_BUILD_RTMP)
   target_link_libraries(roqr-rtmp-tests PRIVATE roqr-rtmp Catch2::Catch2WithMain)
   catch_discover_tests(roqr-rtmp-tests PROPERTIES TIMEOUT 60)
 endif()
+
+if(ROQR_BUILD_EXAMPLES)
+  add_executable(roqr-gateway-tests
+    gateway/bridge_test.cpp
+  )
+  target_link_libraries(roqr-gateway-tests PRIVATE roqr-gateway Catch2::Catch2WithMain)
+  catch_discover_tests(roqr-gateway-tests PROPERTIES TIMEOUT 60)
+endif()
