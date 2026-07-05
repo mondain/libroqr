@@ -23,11 +23,16 @@ if(ROQR_BUILD_RTMP)
   add_subdirectory(rtmp)
 endif()
 
+# The gateway library is needed by both the example binaries and the
+# relay's Media mode, so build it whenever its dependencies are present.
+if(ROQR_BUILD_QUIC AND ROQR_BUILD_RTMP)
+  add_subdirectory(gateway)
+endif()
+
 if(ROQR_BUILD_EXAMPLES)
   if(NOT ROQR_BUILD_QUIC OR NOT ROQR_BUILD_RTMP)
     message(FATAL_ERROR "ROQR_BUILD_EXAMPLES requires ROQR_BUILD_QUIC and ROQR_BUILD_RTMP")
   endif()
-  add_subdirectory(gateway)
   add_subdirectory(examples)
 endif()
 
@@ -38,8 +43,8 @@ if(ROQR_BUILD_QUIC)
 endif()
 
 if(ROQR_BUILD_TOOLS)
-  if(NOT ROQR_BUILD_QUIC)
-    message(FATAL_ERROR "ROQR_BUILD_TOOLS requires ROQR_BUILD_QUIC=ON")
+  if(NOT ROQR_BUILD_QUIC OR NOT ROQR_BUILD_RTMP)
+    message(FATAL_ERROR "ROQR_BUILD_TOOLS requires ROQR_BUILD_QUIC and ROQR_BUILD_RTMP")
   endif()
   add_subdirectory(tools/relayd)
 endif()
