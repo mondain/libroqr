@@ -24,13 +24,17 @@ int main(int argc, char** argv) {
             opts.key_file = argv[++i];
         } else if (std::strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
             ++i;
-            opts.mode = std::strcmp(argv[i], "relay") == 0
-                            ? roqr::relayd::Mode::Relay
-                            : roqr::relayd::Mode::Echo;
+            if (std::strcmp(argv[i], "relay") == 0) {
+                opts.mode = roqr::relayd::Mode::Relay;
+            } else if (std::strcmp(argv[i], "media") == 0) {
+                opts.mode = roqr::relayd::Mode::Media;
+            } else {
+                opts.mode = roqr::relayd::Mode::Echo;
+            }
         } else {
             std::fprintf(stderr,
                          "usage: roqr-relayd --cert C --key K [--port P] "
-                         "[--mode echo|relay]\n");
+                         "[--mode echo|relay|media]\n");
             return 2;
         }
     }

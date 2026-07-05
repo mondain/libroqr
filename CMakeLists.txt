@@ -9,6 +9,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Collocate all built executables (roqr-relayd, roqr-ingest, roqr-egress,
+# roqr-duplex, test binaries) in a single directory so tooling (e.g. the
+# ffmpeg e2e test) can find the gateway trio via one bin dir.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 option(ROQR_BUILD_TESTS "Build unit tests" ON)

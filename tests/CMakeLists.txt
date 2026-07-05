@@ -88,4 +88,7 @@ if(ROQR_BUILD_EXAMPLES)
   )
   target_link_libraries(roqr-gateway-tests PRIVATE roqr-gateway roqr-relayd-lib Catch2::Catch2WithMain)
   catch_discover_tests(roqr-gateway-tests PROPERTIES TIMEOUT 60)
+
+  add_dependencies(roqr-relayd roqr-testcerts)  # ensure certs exist for e2e
+  add_subdirectory(e2e)
 endif()
