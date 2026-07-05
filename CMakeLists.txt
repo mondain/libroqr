@@ -8,7 +8,6 @@ project(libroqr
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Collocate all built executables (roqr-relayd, roqr-ingest, roqr-egress,
 # roqr-duplex, test binaries) in a single directory so tooling (e.g. the
@@ -23,6 +22,15 @@ option(ROQR_BUILD_TOOLS "Build tools (roqr-relayd; needs ROQR_BUILD_QUIC)" OFF)
 option(ROQR_BUILD_RTMP "Build the RTMP/AMF gateway module" ON)
 option(ROQR_BUILD_EXAMPLES "Build gateway library and example apps" ON)
 option(ROQR_BUILD_FFI "Build the C FFI shared library" ON)
+
+# The SHARED roqr-ffi library links the static libraries (and picoquic), so
+# they must be position-independent — but only when FFI is actually built.
+# Setting this directory-scoped variable before add_subdirectory propagates
+# it to every subproject (including the picoquic add_subdirectory), so the
+# core-only build (no FFI) is unaffected.
+if(ROQR_BUILD_FFI AND ROQR_BUILD_QUIC AND ROQR_BUILD_RTMP)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
 
 add_subdirectory(core)
 

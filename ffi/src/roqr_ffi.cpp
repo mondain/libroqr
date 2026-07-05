@@ -1,6 +1,7 @@
 #include "roqr/roqr.h"
 
 #include <memory>
+#include <new>
 
 #include "roqr/quic/client.hpp"
 
