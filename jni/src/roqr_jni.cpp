@@ -112,7 +112,15 @@ Java_org_red5_roqr_RoqrClient_nativeCreate(JNIEnv* env, jclass) {
 
 JNIEXPORT void JNICALL Java_org_red5_roqr_RoqrClient_nativeSetListener(
     JNIEnv* env, jclass, jlong h, jobject listener) {
+    if (h == 0) return;
     auto* jc = reinterpret_cast<JniClient*>(h);
+    if (listener == nullptr) {
+        if (jc->listener != nullptr) {
+            env->DeleteGlobalRef(jc->listener);
+            jc->listener = nullptr;
+        }
+        return;
+    }
     if (jc->listener != nullptr) env->DeleteGlobalRef(jc->listener);
     jc->listener = env->NewGlobalRef(listener);
 
@@ -127,6 +135,7 @@ JNIEXPORT void JNICALL Java_org_red5_roqr_RoqrClient_nativeSetListener(
 
 JNIEXPORT jboolean JNICALL Java_org_red5_roqr_RoqrClient_nativeConnect(
     JNIEnv* env, jclass, jlong h, jstring host, jint port, jboolean insecure) {
+    if (h == 0) return JNI_FALSE;
     auto* jc = reinterpret_cast<JniClient*>(h);
     if (host == nullptr) return JNI_FALSE;
     const char* chost = env->GetStringUTFChars(host, nullptr);
@@ -138,6 +147,7 @@ JNIEXPORT jboolean JNICALL Java_org_red5_roqr_RoqrClient_nativeConnect(
 
 JNIEXPORT jboolean JNICALL Java_org_red5_roqr_RoqrClient_nativeWaitConnected(
     JNIEnv*, jclass, jlong h, jint timeout_ms) {
+    if (h == 0) return JNI_FALSE;
     auto* jc = reinterpret_cast<JniClient*>(h);
     return roqr_client_wait_connected(jc->handle, timeout_ms) ? JNI_TRUE
                                                               : JNI_FALSE;
@@ -146,6 +156,7 @@ JNIEXPORT jboolean JNICALL Java_org_red5_roqr_RoqrClient_nativeWaitConnected(
 JNIEXPORT jboolean JNICALL
 Java_org_red5_roqr_RoqrClient_nativeDatagramsNegotiated(JNIEnv*, jclass,
                                                         jlong h) {
+    if (h == 0) return JNI_FALSE;
     auto* jc = reinterpret_cast<JniClient*>(h);
     return roqr_client_datagrams_negotiated(jc->handle) ? JNI_TRUE : JNI_FALSE;
 }
@@ -153,6 +164,7 @@ Java_org_red5_roqr_RoqrClient_nativeDatagramsNegotiated(JNIEnv*, jclass,
 JNIEXPORT jboolean JNICALL Java_org_red5_roqr_RoqrClient_nativeSend(
     JNIEnv* env, jclass, jlong h, jlong flow_id, jlong ts, jint type,
     jlong msid, jlong csid, jbyteArray payload, jint mode) {
+    if (h == 0) return JNI_FALSE;
     auto* jc = reinterpret_cast<JniClient*>(h);
     if (payload == nullptr) return JNI_FALSE;
     const jsize len = env->GetArrayLength(payload);
@@ -175,24 +187,28 @@ JNIEXPORT jboolean JNICALL Java_org_red5_roqr_RoqrClient_nativeSend(
 
 JNIEXPORT void JNICALL Java_org_red5_roqr_RoqrClient_nativeBindFlow(
     JNIEnv*, jclass, jlong h, jlong flow_id) {
+    if (h == 0) return;
     roqr_client_bind_flow(reinterpret_cast<JniClient*>(h)->handle,
                           static_cast<uint64_t>(flow_id));
 }
 
 JNIEXPORT void JNICALL Java_org_red5_roqr_RoqrClient_nativeRetireFlow(
     JNIEnv*, jclass, jlong h, jlong flow_id) {
+    if (h == 0) return;
     roqr_client_retire_flow(reinterpret_cast<JniClient*>(h)->handle,
                             static_cast<uint64_t>(flow_id));
 }
 
 JNIEXPORT void JNICALL Java_org_red5_roqr_RoqrClient_nativeClose(
     JNIEnv*, jclass, jlong h, jlong code) {
+    if (h == 0) return;
     roqr_client_close(reinterpret_cast<JniClient*>(h)->handle,
                       static_cast<uint64_t>(code));
 }
 
 JNIEXPORT jboolean JNICALL Java_org_red5_roqr_RoqrClient_nativeWaitClosed(
     JNIEnv*, jclass, jlong h, jint timeout_ms) {
+    if (h == 0) return JNI_FALSE;
     return roqr_client_wait_closed(reinterpret_cast<JniClient*>(h)->handle,
                                    timeout_ms)
                ? JNI_TRUE
@@ -201,6 +217,7 @@ JNIEXPORT jboolean JNICALL Java_org_red5_roqr_RoqrClient_nativeWaitClosed(
 
 JNIEXPORT void JNICALL Java_org_red5_roqr_RoqrClient_nativeDestroy(
     JNIEnv* env, jclass, jlong h) {
+    if (h == 0) return;
     auto* jc = reinterpret_cast<JniClient*>(h);
     roqr_client_destroy(jc->handle);  // joins the network thread first
     if (jc->listener != nullptr) env->DeleteGlobalRef(jc->listener);

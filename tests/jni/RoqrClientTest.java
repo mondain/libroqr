@@ -52,6 +52,14 @@ public class RoqrClientTest {
             if (nc.send(nf, DeliveryMode.STREAM)) fail("null payload accepted");
             nc.destroy();
 
+            // setListener(null) must clear, not crash.
+            RoqrClient c2 = new RoqrClient();
+            c2.setListener(null);  // must not SIGSEGV
+            // Calls after destroy() must not crash the JVM.
+            c2.destroy();
+            c2.close(0);            // no-op on destroyed handle
+            if (c2.waitConnected(0)) fail("waitConnected on destroyed");
+
             System.out.println("PASS: RoqrClient echo round-trip");
         } finally {
             relay.destroy();

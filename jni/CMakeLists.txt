@@ -14,6 +14,12 @@ target_compile_features(roqr-jni PRIVATE cxx_std_20)
 target_compile_options(roqr-jni PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra>)
 
+set_target_properties(roqr-jni PROPERTIES
+  VERSION ${PROJECT_VERSION}
+  SOVERSION 0)
+
+install(TARGETS roqr-jni LIBRARY DESTINATION lib)
+
 add_jar(roqr-jar
   SOURCES
     java/org/red5/roqr/RoqrNative.java
@@ -36,3 +42,7 @@ add_jar(roqr-samples
 # Expose the jar path and the jni lib dir to the test subdirectory.
 get_target_property(ROQR_JAR_FILE roqr-jar JAR_FILE)
 set(ROQR_JAR_FILE "${ROQR_JAR_FILE}" CACHE INTERNAL "roqr jar path")
+
+if(ROQR_JAR_FILE)
+  install(FILES "${ROQR_JAR_FILE}" DESTINATION share/java)
+endif()

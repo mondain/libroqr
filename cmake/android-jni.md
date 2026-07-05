@@ -36,12 +36,22 @@ cmake -S . -B build/android-$ANDROID_ABI \
 cmake --build build/android-$ANDROID_ABI --target roqr-jni
 ```
 
-`find_package(JNI)` is not used on Android — the NDK provides `jni.h` on the
-default include path, so `roqr-jni` compiles against it. If your CMake
-version's `FindJNI` misbehaves under the NDK, the `jni/CMakeLists.txt`
-`target_include_directories(... ${JNI_INCLUDE_DIRS})` line is a no-op there
-(the NDK sysroot already has `jni.h`); guard it with
-`if(NOT ANDROID)` if configure complains.
+The root `CMakeLists.txt` still calls `find_package(JNI)` whenever
+`ROQR_BUILD_JNI=ON`, including on Android, but the `jni` subdirectory is
+gated with `if(JNI_FOUND OR ANDROID)` so it is added regardless of whether
+`find_package(JNI)` succeeds under the NDK toolchain (`FindJNI` can be
+unreliable there). Inside `jni/CMakeLists.txt`, the
+`target_include_directories(... ${JNI_INCLUDE_DIRS})` and
+`target_link_libraries(... ${JNI_LIBRARIES})` lines are further guarded with
+`if(NOT ANDROID)`, since the NDK sysroot already provides `jni.h` on the
+default include path and needs no separate JNI libraries to link against.
+
+Note that a HOST JDK is still required even for the NDK configure: the NDK
+only supplies `jni.h`, not a `javac`. `jni/CMakeLists.txt` calls
+`find_package(Java REQUIRED COMPONENTS Development)` and `add_jar` to build
+`roqr.jar` from the platform-independent Java sources, and both need a host
+JDK's `javac` on `PATH` (or discoverable via `JAVA_HOME`) regardless of the
+Android target ABI.
 
 ## Package
 

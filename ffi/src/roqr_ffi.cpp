@@ -39,7 +39,33 @@ extern "C" {
 const char* roqr_version(void) { return "0.1.0"; }
 
 roqr_client* roqr_client_create(void) {
-    return new (std::nothrow) roqr_client();
+    roqr_client* c = new (std::nothrow) roqr_client();
+    if (c == nullptr) return nullptr;
+
+    // Register the trampolines exactly once, before any connect. They
+    // indirect through c->on_message/c->on_closed at call time (set later by
+    // roqr_client_set_on_message/on_closed), so registering them here rather
+    // than in roqr_client_connect avoids a data race: Client::on_message is
+    // an unsynchronized field write only safe before the first connect, and
+    // a retried connect() (e.g. after a wait_connected timeout) would
+    // otherwise rewrite it while the network thread is running.
+    c->client.on_message([c](const roqr::Frame& f) {
+        if (c->on_message == nullptr) return;
+        roqr_frame cf{};
+        cf.flow_id = f.flow_id;
+        cf.timestamp = f.timestamp;
+        cf.message_type = f.message_type;
+        cf.message_stream_id = f.message_stream_id;
+        cf.chunk_stream_id = f.chunk_stream_id;
+        cf.payload = f.payload.data();
+        cf.payload_len = f.payload.size();
+        c->on_message(&cf, c->on_message_user);
+    });
+    c->client.on_closed([c](uint64_t code) {
+        if (c->on_closed != nullptr) c->on_closed(code, c->on_closed_user);
+    });
+
+    return c;
 }
 
 void roqr_client_destroy(roqr_client* client) { delete client; }
@@ -61,22 +87,6 @@ void roqr_client_set_on_closed(roqr_client* c, roqr_closed_cb cb,
 roqr_error roqr_client_connect(roqr_client* c, const char* host,
                                uint16_t port, int insecure_skip_verify) {
     if (c == nullptr || host == nullptr) return ROQR_ERR_INVALID_ARG;
-
-    c->client.on_message([c](const roqr::Frame& f) {
-        if (c->on_message == nullptr) return;
-        roqr_frame cf{};
-        cf.flow_id = f.flow_id;
-        cf.timestamp = f.timestamp;
-        cf.message_type = f.message_type;
-        cf.message_stream_id = f.message_stream_id;
-        cf.chunk_stream_id = f.chunk_stream_id;
-        cf.payload = f.payload.data();
-        cf.payload_len = f.payload.size();
-        c->on_message(&cf, c->on_message_user);
-    });
-    c->client.on_closed([c](uint64_t code) {
-        if (c->on_closed != nullptr) c->on_closed(code, c->on_closed_user);
-    });
 
     roqr::quic::ClientOptions opts;
     opts.insecure_skip_verify = insecure_skip_verify != 0;
