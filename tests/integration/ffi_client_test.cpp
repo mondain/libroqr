@@ -99,3 +99,14 @@ TEST_CASE("ffi wait_connected times out without a server") {
     CHECK(roqr_client_wait_connected(c, 1500) == 0);
     roqr_client_destroy(c);
 }
+
+TEST_CASE("ffi send rejects a null payload pointer with nonzero length") {
+    roqr_client* c = roqr_client_create();
+    roqr_frame f{};
+    f.message_type = 9;
+    f.payload = nullptr;
+    f.payload_len = 8;  // lies about length; must be rejected, not crash
+    CHECK(roqr_client_send(c, &f, ROQR_DELIVERY_STREAM) ==
+          ROQR_ERR_INVALID_ARG);
+    roqr_client_destroy(c);
+}

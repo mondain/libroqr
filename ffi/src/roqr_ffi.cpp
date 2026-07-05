@@ -97,7 +97,8 @@ int roqr_client_datagrams_negotiated(roqr_client* c) {
 
 roqr_error roqr_client_send(roqr_client* c, const roqr_frame* frame,
                             roqr_delivery_mode mode) {
-    if (c == nullptr || frame == nullptr || frame->payload_len == 0) {
+    if (c == nullptr || frame == nullptr || frame->payload == nullptr ||
+        frame->payload_len == 0) {
         return ROQR_ERR_INVALID_ARG;
     }
     roqr::Frame f;
