@@ -44,6 +44,14 @@ public class RoqrClientTest {
             client.close(0);
             client.waitClosed(5000);
             client.destroy();
+
+            // Null inputs must be rejected, not crash the JVM.
+            RoqrClient nc = new RoqrClient();
+            if (nc.connect(null, port, true)) fail("null host accepted");
+            Frame nf = new Frame(0, 1, 9, 1, 6, null);
+            if (nc.send(nf, DeliveryMode.STREAM)) fail("null payload accepted");
+            nc.destroy();
+
             System.out.println("PASS: RoqrClient echo round-trip");
         } finally {
             relay.destroy();

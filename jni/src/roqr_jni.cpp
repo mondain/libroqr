@@ -98,9 +98,14 @@ void closed_trampoline(uint64_t code, void* user) {
 extern "C" {
 
 JNIEXPORT jlong JNICALL
-Java_org_red5_roqr_RoqrClient_nativeCreate(JNIEnv* /*env*/, jclass) {
+Java_org_red5_roqr_RoqrClient_nativeCreate(JNIEnv* env, jclass) {
     auto* jc = new JniClient();
     jc->handle = roqr_client_create();
+
+    jclass fc = env->FindClass("org/red5/roqr/Frame");
+    jc->frame_class = static_cast<jclass>(env->NewGlobalRef(fc));
+    jc->frame_ctor = env->GetMethodID(jc->frame_class, "<init>", "(JJIJJ[B)V");
+
     return reinterpret_cast<jlong>(jc);
 }
 
@@ -115,10 +120,6 @@ JNIEXPORT void JNICALL Java_org_red5_roqr_RoqrClient_nativeSetListener(
         env->GetMethodID(lc, "onMessage", "(Lorg/red5/roqr/Frame;)V");
     jc->on_closed = env->GetMethodID(lc, "onClosed", "(J)V");
 
-    jclass fc = env->FindClass("org/red5/roqr/Frame");
-    jc->frame_class = static_cast<jclass>(env->NewGlobalRef(fc));
-    jc->frame_ctor = env->GetMethodID(jc->frame_class, "<init>", "(JJIJJ[B)V");
-
     roqr_client_set_on_message(jc->handle, message_trampoline, jc);
     roqr_client_set_on_closed(jc->handle, closed_trampoline, jc);
 }
@@ -126,6 +127,7 @@ JNIEXPORT void JNICALL Java_org_red5_roqr_RoqrClient_nativeSetListener(
 JNIEXPORT jboolean JNICALL Java_org_red5_roqr_RoqrClient_nativeConnect(
     JNIEnv* env, jclass, jlong h, jstring host, jint port, jboolean insecure) {
     auto* jc = reinterpret_cast<JniClient*>(h);
+    if (host == nullptr) return JNI_FALSE;
     const char* chost = env->GetStringUTFChars(host, nullptr);
     const roqr_error rc = roqr_client_connect(
         jc->handle, chost, static_cast<uint16_t>(port), insecure ? 1 : 0);
@@ -151,6 +153,7 @@ JNIEXPORT jboolean JNICALL Java_org_red5_roqr_RoqrClient_nativeSend(
     JNIEnv* env, jclass, jlong h, jlong flow_id, jlong ts, jint type,
     jlong msid, jlong csid, jbyteArray payload, jint mode) {
     auto* jc = reinterpret_cast<JniClient*>(h);
+    if (payload == nullptr) return JNI_FALSE;
     const jsize len = env->GetArrayLength(payload);
     std::vector<uint8_t> bytes(static_cast<size_t>(len));
     env->GetByteArrayRegion(payload, 0, len,
