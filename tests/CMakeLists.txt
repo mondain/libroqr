@@ -92,3 +92,11 @@ if(ROQR_BUILD_EXAMPLES)
   add_dependencies(roqr-relayd roqr-testcerts)  # ensure certs exist for e2e
   add_subdirectory(e2e)
 endif()
+
+if(ROQR_BUILD_FFI AND TARGET roqr-ffi)
+  add_executable(roqr-ffi-tests
+    ffi/ffi_smoke_test.cpp
+  )
+  target_link_libraries(roqr-ffi-tests PRIVATE roqr-ffi Catch2::Catch2WithMain)
+  catch_discover_tests(roqr-ffi-tests PROPERTIES TIMEOUT 60)
+endif()

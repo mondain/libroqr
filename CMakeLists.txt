@@ -8,6 +8,7 @@ project(libroqr
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Collocate all built executables (roqr-relayd, roqr-ingest, roqr-egress,
 # roqr-duplex, test binaries) in a single directory so tooling (e.g. the
@@ -21,6 +22,7 @@ option(ROQR_BUILD_QUIC "Build the picoquic transport (needs picoquic)" OFF)
 option(ROQR_BUILD_TOOLS "Build tools (roqr-relayd; needs ROQR_BUILD_QUIC)" OFF)
 option(ROQR_BUILD_RTMP "Build the RTMP/AMF gateway module" ON)
 option(ROQR_BUILD_EXAMPLES "Build gateway library and example apps" ON)
+option(ROQR_BUILD_FFI "Build the C FFI shared library" ON)
 
 add_subdirectory(core)
 
@@ -55,6 +57,14 @@ if(ROQR_BUILD_TOOLS)
     message(FATAL_ERROR "ROQR_BUILD_TOOLS requires ROQR_BUILD_QUIC and ROQR_BUILD_RTMP")
   endif()
   add_subdirectory(tools/relayd)
+endif()
+
+if(ROQR_BUILD_FFI)
+  if(ROQR_BUILD_QUIC AND ROQR_BUILD_RTMP)
+    add_subdirectory(ffi)
+  else()
+    message(STATUS "ROQR_BUILD_FFI needs QUIC and RTMP; skipping FFI in this config")
+  endif()
 endif()
 
 if(ROQR_BUILD_TESTS)
