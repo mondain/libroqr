@@ -1,5 +1,6 @@
 add_library(roqr-relayd-lib STATIC
   src/server.cpp
+  src/media_router.cpp
 )
 
 target_include_directories(roqr-relayd-lib PUBLIC
