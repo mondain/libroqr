@@ -51,12 +51,13 @@ if(ROQR_BUILD_QUIC)
       integration/flow_gating_test.cpp
       integration/relay_test.cpp
       integration/flow_reset_test.cpp
+      integration/relay_media_test.cpp
     )
     add_dependencies(roqr-integration-tests roqr-testcerts)
     target_compile_definitions(roqr-integration-tests PRIVATE
       ROQR_TEST_CERT_DIR="${ROQR_TEST_CERT_DIR}")
     target_link_libraries(roqr-integration-tests PRIVATE
-      roqr-relayd-lib roqr-quic Catch2::Catch2WithMain)
+      roqr-relayd-lib roqr-quic roqr-gateway Catch2::Catch2WithMain)
     catch_discover_tests(roqr-integration-tests PROPERTIES TIMEOUT 60)
   endif()
 endif()

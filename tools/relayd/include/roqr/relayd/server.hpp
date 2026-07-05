@@ -11,7 +11,10 @@ namespace roqr::relayd {
 // Flow ID and carriage; the sender does not get it back. Stream ids are NOT
 // preserved: each (source connection, source stream) pair gets its own
 // server-initiated stream toward each destination.
-enum class Mode { Echo, Relay };
+// Media: parse RTMP commands carried as RoQR frames, register publishers
+// and subscribers by stream name, replay cached init frames on play, and
+// route media publisher->subscribers (the reference RoQR media server).
+enum class Mode { Echo, Relay, Media };
 
 struct ServerOptions {
     uint16_t port = 0;
