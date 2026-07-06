@@ -93,6 +93,7 @@ if(ROQR_BUILD_EXAMPLES)
     gateway/rtmp_commands_test.cpp
     gateway/media_router_test.cpp
     gateway/gap_recovery_test.cpp
+    gateway/player_queue_test.cpp
   )
   target_link_libraries(roqr-gateway-tests PRIVATE roqr-gateway roqr-relayd-lib Catch2::Catch2WithMain)
   catch_discover_tests(roqr-gateway-tests PROPERTIES TIMEOUT 60)
