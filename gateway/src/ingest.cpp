@@ -1,6 +1,5 @@
 #include "roqr/gateway/ingest.hpp"
 
-#include <atomic>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -43,39 +42,59 @@ struct IngestGateway::Impl {
 
     // Idempotent: only the first publish event stands up the supervisor
     // (one publisher at a time, gateway-grade). Subsequent publish events
-    // are ignored.
+    // are ignored. The RTMP Listener spawns one thread per accepted
+    // connection with no single-connection enforcement, so two publishers
+    // can race to publish concurrently -- the check-and-create must be
+    // atomic under `mutex` to avoid a torn read / double construction of
+    // `supervisor`.
     void begin_publish(const std::string& name) {
-        if (supervisor) return;
-        roqr::quic::ClientOptions client_opts;
-        client_opts.insecure_skip_verify = options.insecure_skip_verify;
-        client_opts.idle_timeout = options.idle_timeout;
-        supervisor = std::make_unique<ConnectionSupervisor>(
-            options.roqr_host, options.roqr_port, client_opts,
-            options.reconnect,
-            [this, name](roqr::quic::Client& c) {
-                // Runs on the supervisor thread on EVERY (re)connection: a
-                // reconnect re-sends connect/createStream/publish so the
-                // relay resumes accepting this stream's media.
-                c.send(to_frame(build_connect(1, "live", "rtmp://roqr/live"),
-                                0),
-                       roqr::quic::DeliveryMode::Stream);
-                c.send(to_frame(build_create_stream(2), 0),
-                       roqr::quic::DeliveryMode::Stream);
-                c.send(to_frame(build_publish(3, name), 0),
-                       roqr::quic::DeliveryMode::Stream);
-                {
-                    std::lock_guard lock(mutex);
-                    publishing = true;
-                }
-                cv.notify_all();
-            },
-            [](const roqr::Frame&) {});
-        supervisor->start();
+        ConnectionSupervisor* sup = nullptr;
+        {
+            std::lock_guard lock(mutex);
+            if (supervisor) return;
+            roqr::quic::ClientOptions client_opts;
+            client_opts.insecure_skip_verify = options.insecure_skip_verify;
+            client_opts.idle_timeout = options.idle_timeout;
+            supervisor = std::make_unique<ConnectionSupervisor>(
+                options.roqr_host, options.roqr_port, client_opts,
+                options.reconnect,
+                [this, name](roqr::quic::Client& c) {
+                    // Runs on the supervisor thread on EVERY (re)connection: a
+                    // reconnect re-sends connect/createStream/publish so the
+                    // relay resumes accepting this stream's media. Frames
+                    // forwarded between the connection coming up and this
+                    // handshake completing are dropped (design-intended: see
+                    // ConnectionSupervisor::send's "not connected" semantics).
+                    c.send(to_frame(build_connect(1, "live", "rtmp://roqr/live"),
+                                    0),
+                           roqr::quic::DeliveryMode::Stream);
+                    c.send(to_frame(build_create_stream(2), 0),
+                           roqr::quic::DeliveryMode::Stream);
+                    c.send(to_frame(build_publish(3, name), 0),
+                           roqr::quic::DeliveryMode::Stream);
+                    {
+                        std::lock_guard lock(mutex);
+                        publishing = true;
+                    }
+                    cv.notify_all();
+                },
+                [](const roqr::Frame&) {});
+            sup = supervisor.get();
+        }
+        sup->start();
     }
 
     void forward(const roqr::rtmp::RtmpMessage& msg) {
         if (msg.payload.empty()) return;  // RoQR requires payload > 0
-        if (supervisor) supervisor->send(to_frame(msg, 0), mode_for(msg));
+        ConnectionSupervisor* sup = nullptr;
+        {
+            std::lock_guard lock(mutex);
+            sup = supervisor.get();
+        }
+        // send() is itself thread-safe; call it outside the lock so a
+        // blocked/slow send never holds up other sessions touching
+        // `supervisor` (e.g. a racing begin_publish or stop()).
+        if (sup) sup->send(to_frame(msg, 0), mode_for(msg));
     }
 };
 
