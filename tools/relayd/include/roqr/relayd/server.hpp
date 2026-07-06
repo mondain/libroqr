@@ -22,6 +22,10 @@ struct ServerOptions {
     std::string key_file;
     Mode mode = Mode::Echo;
     std::string alpn = "roqr";
+    // Test-only: close every connection immediately upon reaching the
+    // `ready` state, before any frames are exchanged. Used to deterministically
+    // reproduce a handshake-then-instant-drop scenario for reconnect tests.
+    bool close_after_ready = false;
 };
 
 class Server {

@@ -82,6 +82,23 @@ struct ConnectionSupervisor::Impl {
                 cv.notify_all();
             });
 
+            // Reset drop_signaled exactly once per iteration, for THIS fresh
+            // client, before connect() can start its network thread (so
+            // before on_closed can possibly fire for it). The previous
+            // client, if any, was already destroyed at the end of the prior
+            // iteration (dead.reset() joined its network thread), so no
+            // stale on_closed from it can still be in flight here. From this
+            // point on, every drop_signaled=true belongs to the current
+            // client and must be preserved until observed -- in particular,
+            // the success path below must NOT clear it again, or a
+            // connection that dies right after coming up (or during
+            // wait_connected itself) would have its drop signal erased and
+            // the subsequent cv.wait() would block forever.
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                drop_signaled = false;
+            }
+
             if (!c->connect(host, port, client_opts)) {
                 c.reset();
                 if (!handle_failed_attempt(attempts)) break;
@@ -136,11 +153,15 @@ struct ConnectionSupervisor::Impl {
                 continue;
             }
 
-            // SUCCESS.
+            // SUCCESS. Do NOT reset drop_signaled here: it was already reset
+            // once for this client before connect() (see above), and an
+            // on_closed for this same client may have already fired (e.g.
+            // during wait_connected) and set it -- that signal must survive
+            // so the cv.wait() below observes it immediately instead of
+            // blocking forever on a connection that is already dead.
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 connected = true;
-                drop_signaled = false;
                 if (!first_connect) ++reconnect_count;
             }
             first_connect = false;
