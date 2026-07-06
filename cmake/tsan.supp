@@ -1,0 +1,28 @@
+# ThreadSanitizer suppressions for the libroqr TSAN CI job.
+#
+# Scope: suppress races that originate ENTIRELY inside the vendored picoquic
+# and that libroqr cannot fix. ROQR's own code (core/ quic/ rtmp/ gateway/
+# tools/ ffi/) is instrumented and unsuppressed, so real races in our code
+# fail CI. picoquic itself is built uninstrumented, so its internal memory
+# races are not tracked -- but TSAN's syscall interceptors (close/read/pipe)
+# still flag fd-lifecycle races in picoquic's socket loop regardless of
+# instrumentation, which is what the entries below cover.
+#
+# Format: https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
+#
+# picoquic manages a wake-up pipe for its network thread: the loop thread
+# reads it (picoquic_packet_loop_poll) while teardown closes it
+# (picoquic_close_network_wake_up, from picoquic_delete_network_thread) and
+# setup creates it (picoquic_open_network_wake_up, from
+# picoquic_start_custom_network_thread_qmux). TSAN reports an fd race across
+# these because the happens-before edge lives inside picoquic's uninstrumented
+# thread join. We drive this only through the documented Client lifecycle
+# (connect / destroy) and never touch the fd ourselves, so it is not fixable
+# from libroqr. These functions are pipe-fd-specific and never appear as the
+# accessing frame of a genuine race in ROQR code, so suppressing them cannot
+# mask a real libroqr race. Note picoquic_packet_loop_poll is deliberately NOT
+# suppressed: it appears in the stack of our on_message/on_closed callbacks
+# (which run on picoquic's network thread), so suppressing it could hide a
+# real race in those callbacks.
+race:picoquic_close_network_wake_up
+race:picoquic_open_network_wake_up

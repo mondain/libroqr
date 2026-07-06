@@ -52,3 +52,35 @@ jobs:
         run: cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  tsan:
+    name: thread-sanitizer (clang)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y
+             cmake clang ninja-build libssl-dev ffmpeg
+      - name: Build picoquic deps
+        run: eval "$(scripts/setup_picoquic_deps.sh)"
+      - name: Configure (TSAN; ROQR targets instrumented, picoquic is not)
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          eval "$(scripts/setup_picoquic_deps.sh)"
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
+            -DROQR_SANITIZE=thread \
+            -DROQR_BUILD_QUIC=ON -DROQR_BUILD_RTMP=ON \
+            -DROQR_BUILD_TOOLS=ON -DROQR_BUILD_EXAMPLES=ON \
+            -DROQR_BUILD_TESTS=ON -DROQR_BUILD_JNI=OFF
+      - name: Build
+        run: cmake --build build --parallel
+      # halt_on_error=0 lets a single test report every race it hits; TSAN still
+      # exits non-zero if any (unsuppressed) race is found, failing the job. The
+      # suppressions file covers only picoquic's internal wake-up-pipe fd races
+      # (see cmake/tsan.supp); races in ROQR code are unsuppressed and fail CI.
+      - name: Test (TSAN)
+        env:
+          TSAN_OPTIONS: "halt_on_error=0 history_size=7 second_deadlock_stack=1 suppressions=${{ github.workspace }}/cmake/tsan.supp"
+        run: ctest --test-dir build --output-on-failure --timeout 300
