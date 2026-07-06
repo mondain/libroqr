@@ -33,6 +33,7 @@ struct Client::Impl {
     std::mutex mutex;
     std::condition_variable cv;
     bool connected = false;
+    bool closing = false;  // latched when signal_closed begins running the handler
     bool closed = false;
     uint64_t close_code = 0;
 
@@ -143,12 +144,21 @@ struct Client::Impl {
     void signal_closed(uint64_t code) {
         {
             std::lock_guard lock(mutex);
-            if (closed) return;
+            if (closed || closing) return;
+            closing = true;  // latch so the destructor's `closed = true` (or a
+                             // later picoquic_free-triggered close) can't
+                             // re-run the handler.
+        }
+        // Run the handler BEFORE publishing `closed`, so a thread returning
+        // from wait_closed() is guaranteed the on_closed callback has already
+        // fired. Invoked outside the lock (the handler must not block/re-enter).
+        if (closed_handler) closed_handler(code);
+        {
+            std::lock_guard lock(mutex);
             closed = true;
             close_code = code;
             cv.notify_all();
         }
-        if (closed_handler) closed_handler(code);
     }
 
     // Runs on the network thread: apply app-thread requests.
