@@ -84,3 +84,45 @@ jobs:
         env:
           TSAN_OPTIONS: "halt_on_error=0 history_size=7 second_deadlock_stack=1 suppressions=${{ github.workspace }}/cmake/tsan.supp"
         run: ctest --test-dir build --output-on-failure --timeout 300
+
+  rust-example:
+    name: rust ffi example
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y
+             cmake g++ ninja-build libssl-dev openssl
+      - name: Build picoquic deps
+        run: eval "$(scripts/setup_picoquic_deps.sh)"
+      # Build only what the example needs: the FFI shared library and the relay.
+      - name: Build libroqr-ffi and roqr-relayd
+        run: |
+          eval "$(scripts/setup_picoquic_deps.sh)"
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug \
+            -DROQR_BUILD_QUIC=ON -DROQR_BUILD_RTMP=ON -DROQR_BUILD_TOOLS=ON \
+            -DROQR_BUILD_FFI=ON -DROQR_BUILD_EXAMPLES=OFF \
+            -DROQR_BUILD_TESTS=OFF -DROQR_BUILD_JNI=OFF
+          cmake --build build --target roqr-ffi roqr-relayd --parallel
+      # ubuntu-latest ships a stable Rust toolchain; no install step needed.
+      - name: Build the Rust example
+        env:
+          ROQR_FFI_LIB_DIR: ${{ github.workspace }}/build/ffi
+          RUSTFLAGS: "-D warnings"
+        run: cargo build --manifest-path examples/rust/Cargo.toml
+      # End-to-end: the example connects to a relay in echo mode and must get
+      # every frame back. build.rs baked an rpath to ROQR_FFI_LIB_DIR, so the
+      # binary finds libroqr-ffi.so without LD_LIBRARY_PATH.
+      - name: Echo round-trip smoke test
+        run: |
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+            -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost"
+          ./build/bin/roqr-relayd --cert cert.pem --key key.pem --port 4443 --mode echo &
+          relay_pid=$!
+          trap 'kill "$relay_pid" 2>/dev/null || true' EXIT
+          sleep 2
+          set +e
+          examples/rust/target/debug/roqr-rust-client 127.0.0.1 4443
+          rc=$?
+          set -e
+          exit $rc

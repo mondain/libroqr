@@ -131,6 +131,7 @@ network-thread callbacks — suppressing it could hide a real callback race.
 | `core-only (no picoquic)` | Builds and tests just the sans-I/O core (`ROQR_BUILD_QUIC=OFF`). |
 | `full (gcc)` / `full (clang)` | Full build with QUIC, tools, examples; runs the whole suite including the ffmpeg e2e tests. |
 | `thread-sanitizer (clang)` | Full build with `ROQR_SANITIZE=thread`; runs the suite under TSAN with the suppressions file. A race in ROQR code fails the job. |
+| `rust ffi example` | Builds `libroqr-ffi` and `roqr-relayd`, builds `examples/rust` (warnings-as-errors), and runs the example against a relay in echo mode as an end-to-end smoke test. |
 
 ### Project layout
 
