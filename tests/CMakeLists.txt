@@ -95,8 +95,12 @@ if(ROQR_BUILD_EXAMPLES)
     gateway/media_router_test.cpp
     gateway/gap_recovery_test.cpp
     gateway/player_queue_test.cpp
+    gateway/connection_supervisor_test.cpp
   )
   target_link_libraries(roqr-gateway-tests PRIVATE roqr-gateway roqr-relayd-lib Catch2::Catch2WithMain)
+  add_dependencies(roqr-gateway-tests roqr-testcerts)
+  target_compile_definitions(roqr-gateway-tests PRIVATE
+    ROQR_TEST_CERT_DIR="${ROQR_TEST_CERT_DIR}")
   catch_discover_tests(roqr-gateway-tests PROPERTIES TIMEOUT 60)
 
   add_dependencies(roqr-relayd roqr-testcerts)  # ensure certs exist for e2e
