@@ -1,5 +1,7 @@
 # libroqr
 
+![\m/](docs/logo/small128.jpg)
+
 A C++20 implementation of RoQR (RTMP over QUIC,
 draft-gregoire-rtmp-over-quic) with a sans-I/O protocol core, a picoquic
 transport, an RTMP/AMF gateway module, a test relay, and example gateways.
