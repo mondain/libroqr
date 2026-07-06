@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 
+#include "roqr/gateway/connection_supervisor.hpp"
+
 namespace roqr::gateway {
 
 struct EgressOptions {
@@ -13,6 +15,8 @@ struct EgressOptions {
     uint16_t roqr_port = 4443;
     std::string stream_name = "cam";
     bool insecure_skip_verify = true;
+    ReconnectPolicy reconnect{};
+    std::chrono::milliseconds idle_timeout{15000};
 };
 
 // Accepts one RTMP player (ffplay) on rtmp_port, connects to the RoQR

@@ -3,12 +3,14 @@
 #include <condition_variable>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "roqr/gateway/bridge.hpp"
+#include "roqr/gateway/connection_supervisor.hpp"
 #include "roqr/gateway/gap.hpp"
 #include "roqr/gateway/player_queue.hpp"
 #include "roqr/gateway/rtmp_commands.hpp"
@@ -52,9 +54,9 @@ struct EgressGateway::Impl {
     std::thread writer;
     bool writer_started = false;
 
-    // Declared last: ~Client joins the network thread before the members
-    // its handlers touch are destroyed.
-    roqr::quic::Client client;
+    // Declared last: the supervisor (and the Client it owns) is torn down
+    // before the members its handlers touch are destroyed.
+    std::unique_ptr<ConnectionSupervisor> supervisor;
 
     void writer_loop() {
         for (;;) {
@@ -122,18 +124,16 @@ struct EgressGateway::Impl {
         player_ready = true;
     }
 
-    void begin_play() {
-        roqr::quic::ClientOptions o;
-        o.insecure_skip_verify = options.insecure_skip_verify;
-        client.on_message([this](const roqr::Frame& f) { on_frame(f); });
-        if (!client.connect(options.roqr_host, options.roqr_port, o)) return;
-        if (!client.wait_connected(std::chrono::seconds(5))) return;
-        client.send(to_frame(build_connect(1, "live", "rtmp://roqr/live"), 0),
-                    roqr::quic::DeliveryMode::Stream);
-        client.send(to_frame(build_create_stream(2), 0),
-                    roqr::quic::DeliveryMode::Stream);
-        client.send(to_frame(build_play(3, options.stream_name), 0),
-                    roqr::quic::DeliveryMode::Stream);
+    // Runs on the supervisor thread on EVERY (re)connection: re-sending
+    // play() after a reconnect re-subscribes and the relay replays init
+    // frames — intended.
+    void on_ready(roqr::quic::Client& c) {
+        c.send(to_frame(build_connect(1, "live", "rtmp://roqr/live"), 0),
+               roqr::quic::DeliveryMode::Stream);
+        c.send(to_frame(build_create_stream(2), 0),
+               roqr::quic::DeliveryMode::Stream);
+        c.send(to_frame(build_play(3, options.stream_name), 0),
+               roqr::quic::DeliveryMode::Stream);
         {
             std::lock_guard lock(mutex);
             playing = true;
@@ -152,7 +152,14 @@ bool EgressGateway::start(const EgressOptions& options) {
         impl->writer = std::thread([impl] { impl->writer_loop(); });
         impl->writer_started = true;
     }
-    impl->begin_play();  // connect + play before accepting the player
+    roqr::quic::ClientOptions client_opts;
+    client_opts.insecure_skip_verify = options.insecure_skip_verify;
+    client_opts.idle_timeout = options.idle_timeout;
+    impl->supervisor = std::make_unique<ConnectionSupervisor>(
+        options.roqr_host, options.roqr_port, client_opts, options.reconnect,
+        [impl](roqr::quic::Client& c) { impl->on_ready(c); },
+        [impl](const roqr::Frame& f) { impl->on_frame(f); });
+    impl->supervisor->start();  // connect + play before accepting the player
     return impl->listener.start(
         options.rtmp_port,
         [impl](roqr::rtmp::ServerSession& s) {
@@ -186,9 +193,9 @@ bool EgressGateway::start(const EgressOptions& options) {
 }
 
 void EgressGateway::stop() {
-    // 1. Stop the QUIC network thread so on_frame stops enqueuing.
-    impl_->client.close();
-    impl_->client.wait_closed(std::chrono::seconds(2));
+    // 1. Stop the supervisor (and the QUIC network thread it owns) so
+    //    on_frame stops enqueuing. Guarded: stop() before start() is legal.
+    if (impl_->supervisor) impl_->supervisor->stop();
     // 2. Unblock a writer that may be stuck in a blocking send to a stalled
     //    player: shut down the player's fd so the send returns.
     {
