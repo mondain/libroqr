@@ -18,6 +18,18 @@ struct ClientOptions {
     bool insecure_skip_verify = true;
     DatagramFallback datagram_fallback = DatagramFallback::Stream;
     roqr::FlowTableLimits flow_limits{};
+
+    // 0 keeps picoquic's default (30s). Bounds how long the client waits for
+    // peer activity before declaring the connection dead — this is what
+    // lets a supervisor notice a silently-dropped server (the relay sends
+    // no CONNECTION_CLOSE on shutdown). Keepalive is enabled at
+    // idle_timeout/2 so an idle-but-alive connection is not killed by a
+    // short timeout.
+    std::chrono::milliseconds idle_timeout{15000};
+    // 0 keeps picoquic's default. Bounds how long connect()/wait_connected
+    // wait for the handshake before a failed attempt; keep it well under
+    // idle_timeout.
+    std::chrono::milliseconds handshake_timeout{10000};
 };
 
 // RoQR client over picoquic. One background network thread owns all

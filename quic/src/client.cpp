@@ -350,6 +350,19 @@ bool Client::connect(const std::string& host, uint16_t port,
         impl_->options.alpn, impl_->options.insecure_skip_verify);
     if (!impl_->quic) return false;
 
+    if (impl_->options.idle_timeout.count() > 0) {
+        picoquic_set_default_idle_timeout(
+            impl_->quic->get(),
+            static_cast<uint64_t>(impl_->options.idle_timeout.count()));
+    }
+    if (impl_->options.handshake_timeout.count() > 0) {
+        // picoquic's handshake timeout API takes microseconds.
+        picoquic_set_default_handshake_timeout(
+            impl_->quic->get(),
+            static_cast<uint64_t>(impl_->options.handshake_timeout.count()) *
+                1000);
+    }
+
     // Advertise DATAGRAM support (RFC 9221).
     if (picoquic_set_default_tp_value(impl_->quic->get(),
                                       picoquic_tp_max_datagram_frame_size,
@@ -370,6 +383,12 @@ bool Client::connect(const std::string& host, uint16_t port,
         0, host.c_str(), impl_->options.alpn.c_str(),
         &Impl::connection_callback, impl_.get());
     if (impl_->cnx == nullptr) return false;
+
+    if (impl_->options.idle_timeout.count() > 0) {
+        // interval 0 => picoquic uses idle_timeout/2, keeping an idle-but-
+        // alive connection from being killed by the shortened idle timeout.
+        picoquic_enable_keep_alive(impl_->cnx, 0);
+    }
 
     impl_->loop_param = picoquic_packet_loop_param_t{};
     impl_->loop_param.local_af = AF_INET;

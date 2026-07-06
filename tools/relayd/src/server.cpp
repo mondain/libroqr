@@ -276,6 +276,11 @@ int Server::Impl::connection_callback(picoquic_cnx_t* cnx,
             // it has sent data, so relay forwarding reaches pure
             // subscribers (connections that never send).
             impl->conns.try_emplace(cnx);
+            if (impl->options.close_after_ready) {
+                // Test-only: simulate a relay that completes the handshake
+                // and immediately drops the connection.
+                picoquic_close(cnx, 0);
+            }
             break;
         case picoquic_callback_stream_data:
             impl->handle_stream_frames(cnx, stream_id, bytes, length);

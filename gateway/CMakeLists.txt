@@ -4,6 +4,7 @@ add_library(roqr-gateway STATIC
   src/ingest.cpp
   src/egress.cpp
   src/player_queue.cpp
+  src/connection_supervisor.cpp
 )
 
 target_include_directories(roqr-gateway PUBLIC
