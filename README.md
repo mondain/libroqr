@@ -11,7 +11,15 @@ ffmpeg (RTMP publish) -> roqr-ingest -> roqr-relayd -> roqr-egress -> ffmpeg (RT
 ```
 
 RoQR carries RTMP message metadata and payloads over QUIC streams and
-DATAGRAM frames.
+DATAGRAM frames. The gateways auto-reconnect to the relay if the QUIC
+connection drops.
+
+## Documentation
+
+- [docs/guide.md](docs/guide.md) — development, deployment, and the full
+  configuration reference (build options, CLI flags, and library options).
+- `cmake/android-jni.md` — Android NDK cross-compile for the JNI bindings.
+- `docs/reference/` — vendored Enhanced RTMP (E-RTMP) specifications.
 
 ## Build
 
