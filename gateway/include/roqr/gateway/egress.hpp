@@ -27,6 +27,9 @@ public:
     void stop();
     bool wait_playing(std::chrono::milliseconds timeout);
 
+    // Number of media messages dropped under player backpressure (draft s11).
+    uint64_t frames_dropped() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

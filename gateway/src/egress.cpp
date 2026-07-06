@@ -5,10 +5,12 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "roqr/gateway/bridge.hpp"
 #include "roqr/gateway/gap.hpp"
+#include "roqr/gateway/player_queue.hpp"
 #include "roqr/gateway/rtmp_commands.hpp"
 #include "roqr/quic/client.hpp"
 #include "roqr/rtmp/classify.hpp"
@@ -39,9 +41,33 @@ struct EgressGateway::Impl {
 
     roqr::gateway::GapTracker gaps;  // draft s8, defined in gap.hpp
 
+    // Bounded queue + dedicated writer thread (draft s11): on_frame (QUIC
+    // network thread) and on_player_play (session thread) only enqueue;
+    // the writer thread does the blocking player->send, so a stalled RTMP
+    // player never wedges the QUIC loop. Must be declared before `client`
+    // (see below) so they're destroyed after it re: construction order,
+    // but they're joined/closed explicitly in stop() well before that.
+    static constexpr size_t kMaxQueuedMessages = 512;
+    PlayerQueue queue{kMaxQueuedMessages};
+    std::thread writer;
+    bool writer_started = false;
+
     // Declared last: ~Client joins the network thread before the members
     // its handlers touch are destroyed.
     roqr::quic::Client client;
+
+    void writer_loop() {
+        for (;;) {
+            auto msg = queue.pop();
+            if (!msg) return;  // closed and drained
+            roqr::rtmp::ServerSession* p = nullptr;
+            {
+                std::lock_guard lock(player_mutex);
+                if (player_ready) p = player;
+            }
+            if (p != nullptr) p->send(*msg);
+        }
+    }
 
     static bool is_init(const roqr::rtmp::RtmpMessage& msg) {
         if (msg.type == roqr::rtmp::kTypeDataAmf0 || msg.type == 15 /* AMF3 data */)
@@ -67,23 +93,32 @@ struct EgressGateway::Impl {
         if (msg.type == roqr::rtmp::kTypeCommandAmf0) return;  // relay replies
         if (msg.type == 9 && !accept_video(msg)) return;
 
-        std::lock_guard lock(player_mutex);
-        if (is_init(msg)) {
-            if (init_cache.find(msg.type) == init_cache.end()) {
-                init_types.push_back(msg.type);
+        const bool init = is_init(msg);
+        {
+            std::lock_guard lock(player_mutex);
+            if (init) {
+                if (init_cache.find(msg.type) == init_cache.end()) {
+                    init_types.push_back(msg.type);
+                }
+                init_cache[msg.type] = msg;
             }
-            init_cache[msg.type] = msg;
+            if (!player_ready) return;  // pre-play: cache only, don't enqueue
         }
-        if (player != nullptr && player_ready) player->send(msg);
+        queue.push(std::move(msg),
+                   init ? PlayerQueue::Kind::Init : PlayerQueue::Kind::Coded);
     }
 
     // Called on the session thread when the player issues play (after the
-    // RTMP handshake). Primes it with the cached init frames, then opens
-    // live delivery.
+    // RTMP handshake). Enqueues the cached init frames (so the writer
+    // thread delivers them, not the session thread) and sets player_ready
+    // under the lock before releasing, so on_frame cannot interleave a live
+    // coded frame ahead of the init frames.
     void on_player_play() {
         std::lock_guard lock(player_mutex);
         if (player == nullptr) return;
-        for (uint8_t type : init_types) player->send(init_cache.at(type));
+        for (uint8_t type : init_types) {
+            queue.push(init_cache.at(type), PlayerQueue::Kind::Init);
+        }
         player_ready = true;
     }
 
@@ -113,12 +148,24 @@ EgressGateway::~EgressGateway() { stop(); }
 bool EgressGateway::start(const EgressOptions& options) {
     impl_->options = options;
     Impl* impl = impl_.get();
+    if (!impl->writer_started) {
+        impl->writer = std::thread([impl] { impl->writer_loop(); });
+        impl->writer_started = true;
+    }
     impl->begin_play();  // connect + play before accepting the player
     return impl->listener.start(
         options.rtmp_port,
         [impl](roqr::rtmp::ServerSession& s) {
             {
                 std::lock_guard lock(impl->player_mutex);
+                // A previous player may still be alive (e.g. a stalled one
+                // that never disconnected): shut its fd down so any writer
+                // blocked in its send() unblocks, then drop its queued
+                // frames so the new player isn't fed stale, prior-era media
+                // ahead of its own init frames.
+                if (impl->player != nullptr && impl->player != &s)
+                    impl->player->close();
+                impl->queue.clear();
                 impl->player = &s;
                 impl->player_ready = false;
             }
@@ -139,9 +186,26 @@ bool EgressGateway::start(const EgressOptions& options) {
 }
 
 void EgressGateway::stop() {
-    impl_->listener.stop();
+    // 1. Stop the QUIC network thread so on_frame stops enqueuing.
     impl_->client.close();
     impl_->client.wait_closed(std::chrono::seconds(2));
+    // 2. Unblock a writer that may be stuck in a blocking send to a stalled
+    //    player: shut down the player's fd so the send returns.
+    {
+        std::lock_guard lock(impl_->player_mutex);
+        if (impl_->player != nullptr) impl_->player->close();
+    }
+    // 3. Close the queue and join the writer (it drains, sends fail fast on
+    //    the shut-down fd, then exits).
+    impl_->queue.close();
+    if (impl_->writer.joinable()) impl_->writer.join();
+    impl_->writer_started = false;
+    // 4. Now no thread touches the player: safe to destroy the sessions.
+    impl_->listener.stop();
+}
+
+uint64_t EgressGateway::frames_dropped() const {
+    return impl_->queue.dropped();
 }
 
 bool EgressGateway::wait_playing(std::chrono::milliseconds timeout) {

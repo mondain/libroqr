@@ -3,6 +3,7 @@ add_library(roqr-gateway STATIC
   src/rtmp_commands.cpp
   src/ingest.cpp
   src/egress.cpp
+  src/player_queue.cpp
 )
 
 target_include_directories(roqr-gateway PUBLIC
