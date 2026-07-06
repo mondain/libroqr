@@ -2,9 +2,11 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 
 #include "roqr/gateway/bridge.hpp"
+#include "roqr/gateway/connection_supervisor.hpp"
 #include "roqr/gateway/rtmp_commands.hpp"
 #include "roqr/quic/client.hpp"
 #include "roqr/rtmp/classify.hpp"
@@ -19,9 +21,9 @@ struct IngestGateway::Impl {
     std::condition_variable cv;
     bool publishing = false;
 
-    // Declared last: ~Client joins the network thread before the members
-    // its handlers touch are destroyed.
-    roqr::quic::Client client;
+    // Declared last: the supervisor (and the Client it owns) is torn down
+    // before the members its handlers touch are destroyed.
+    std::unique_ptr<ConnectionSupervisor> supervisor;
 
     roqr::quic::DeliveryMode mode_for(const roqr::rtmp::RtmpMessage& msg) {
         if (msg.type != 8 && msg.type != 9) {
@@ -39,33 +41,41 @@ struct IngestGateway::Impl {
         return roqr::quic::DeliveryMode::Auto;
     }
 
+    // Idempotent: only the first publish event stands up the supervisor
+    // (one publisher at a time, gateway-grade). Subsequent publish events
+    // are ignored.
     void begin_publish(const std::string& name) {
-        if (!client.connect(options.roqr_host, options.roqr_port,
-                            [&] {
-                                roqr::quic::ClientOptions o;
-                                o.insecure_skip_verify =
-                                    options.insecure_skip_verify;
-                                return o;
-                            }())) {
-            return;
-        }
-        if (!client.wait_connected(std::chrono::seconds(5))) return;
-        client.send(to_frame(build_connect(1, "live", "rtmp://roqr/live"), 0),
-                    roqr::quic::DeliveryMode::Stream);
-        client.send(to_frame(build_create_stream(2), 0),
-                    roqr::quic::DeliveryMode::Stream);
-        client.send(to_frame(build_publish(3, name), 0),
-                    roqr::quic::DeliveryMode::Stream);
-        {
-            std::lock_guard lock(mutex);
-            publishing = true;
-        }
-        cv.notify_all();
+        if (supervisor) return;
+        roqr::quic::ClientOptions client_opts;
+        client_opts.insecure_skip_verify = options.insecure_skip_verify;
+        client_opts.idle_timeout = options.idle_timeout;
+        supervisor = std::make_unique<ConnectionSupervisor>(
+            options.roqr_host, options.roqr_port, client_opts,
+            options.reconnect,
+            [this, name](roqr::quic::Client& c) {
+                // Runs on the supervisor thread on EVERY (re)connection: a
+                // reconnect re-sends connect/createStream/publish so the
+                // relay resumes accepting this stream's media.
+                c.send(to_frame(build_connect(1, "live", "rtmp://roqr/live"),
+                                0),
+                       roqr::quic::DeliveryMode::Stream);
+                c.send(to_frame(build_create_stream(2), 0),
+                       roqr::quic::DeliveryMode::Stream);
+                c.send(to_frame(build_publish(3, name), 0),
+                       roqr::quic::DeliveryMode::Stream);
+                {
+                    std::lock_guard lock(mutex);
+                    publishing = true;
+                }
+                cv.notify_all();
+            },
+            [](const roqr::Frame&) {});
+        supervisor->start();
     }
 
     void forward(const roqr::rtmp::RtmpMessage& msg) {
         if (msg.payload.empty()) return;  // RoQR requires payload > 0
-        client.send(to_frame(msg, 0), mode_for(msg));
+        if (supervisor) supervisor->send(to_frame(msg, 0), mode_for(msg));
     }
 };
 
@@ -92,9 +102,8 @@ bool IngestGateway::start(const IngestOptions& options) {
 }
 
 void IngestGateway::stop() {
-    impl_->listener.stop();
-    impl_->client.close();
-    impl_->client.wait_closed(std::chrono::seconds(2));
+    impl_->listener.stop();  // stop the RTMP source first: no more forwards
+    if (impl_->supervisor) impl_->supervisor->stop();
 }
 
 bool IngestGateway::wait_publishing(std::chrono::milliseconds timeout) {

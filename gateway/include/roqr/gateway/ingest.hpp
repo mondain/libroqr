@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 
+#include "roqr/gateway/connection_supervisor.hpp"
+
 namespace roqr::gateway {
 
 struct IngestOptions {
@@ -12,6 +14,8 @@ struct IngestOptions {
     std::string roqr_host = "127.0.0.1";
     uint16_t roqr_port = 4443;
     bool insecure_skip_verify = true;
+    ReconnectPolicy reconnect{};
+    std::chrono::milliseconds idle_timeout{15000};
 };
 
 // Accepts one RTMP publisher on rtmp_port, re-originates its session over a
