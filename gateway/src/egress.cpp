@@ -46,7 +46,7 @@ struct EgressGateway::Impl {
     // Bounded queue + dedicated writer thread (draft s11): on_frame (QUIC
     // network thread) and on_player_play (session thread) only enqueue;
     // the writer thread does the blocking player->send, so a stalled RTMP
-    // player never wedges the QUIC loop. Must be declared before `client`
+    // player never wedges the QUIC loop. Must be declared before `supervisor`
     // (see below) so they're destroyed after it re: construction order,
     // but they're joined/closed explicitly in stop() well before that.
     static constexpr size_t kMaxQueuedMessages = 512;

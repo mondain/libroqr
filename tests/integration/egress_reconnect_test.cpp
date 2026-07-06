@@ -169,12 +169,17 @@ TEST_CASE("egress auto-reconnects after the relay drops and serves video again")
     REQUIRE(player.connect_and_play(rtmp_port, "cam"));
     std::this_thread::sleep_for(200ms);
 
-    // Publish a seq header + keyframe; the player must receive video.
+    // Publish a seq header + keyframe (two pre-drop video frames); the
+    // player must receive both before we record the baseline. If baseline
+    // were captured after only the first frame, the second pre-drop frame
+    // could still be sitting parsed-but-undelivered and would later satisfy
+    // the post-restart assertion below on its own -- a false pass with zero
+    // genuine reconnect media. Waiting for both closes that window.
     pub.send(to_frame(vid(0, {0x17, 0x00, 0x11}), 0),
              roqr::quic::DeliveryMode::Stream);
     pub.send(to_frame(vid(40, {0x17, 0x01, 0x22}), 0),
              roqr::quic::DeliveryMode::Stream);
-    REQUIRE(player.wait_video_at_least(1, 5s));
+    REQUIRE(player.wait_video_at_least(2, 5s));
     const size_t baseline = player.video_count;
 
     // Simulate a server loss. The relay sends no CONNECTION_CLOSE on
