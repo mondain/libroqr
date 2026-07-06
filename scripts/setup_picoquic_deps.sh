@@ -28,8 +28,13 @@ fetch_ref() { # dir repo ref
 fetch_ref "${DEPS}/picotls" "${PICOTLS_REPO}" "${PICOTLS_REF}" >&2
 git -C "${DEPS}/picotls" submodule update --init --recursive -q >&2
 if [ ! -f "${DEPS}/picotls/build/libpicotls-core.a" ]; then
+    # PIC is required: the picotls static libs get linked into the SHARED
+    # libroqr-ffi.so. Without it, ld rejects picotls's local-exec TLS
+    # relocations (R_X86_64_TPOFF32) when building the shared object. picoquic
+    # itself gets PIC via the root project's CMAKE_POSITION_INDEPENDENT_CODE.
     cmake -S "${DEPS}/picotls" -B "${DEPS}/picotls/build" \
-        -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 >&2
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON >&2
     cmake --build "${DEPS}/picotls/build" --parallel \
         --target picotls-core picotls-openssl picotls-minicrypto >&2
 fi
