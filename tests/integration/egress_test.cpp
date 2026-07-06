@@ -32,8 +32,15 @@ struct RtmpPlayer {
     roqr::rtmp::ChunkReader reader;
     roqr::rtmp::ChunkWriter writer;
 
-    bool connect_and_play(uint16_t port, const std::string& name) {
+    // rcvbuf: 0 = don't set (delivery test's default, kernel autotuning
+    // applies); > 0 pins SO_RCVBUF before connect so the advertised TCP
+    // window is capped at handshake, making a stalled reader's window-full
+    // point deterministic regardless of host tcp_rmem/tcp_wmem tuning.
+    bool connect_and_play(uint16_t port, const std::string& name,
+                          int rcvbuf = 0) {
         fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (rcvbuf > 0)
+            ::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port);
@@ -172,20 +179,25 @@ TEST_CASE("a stalled player does not wedge the egress QUIC thread") {
     REQUIRE(egress.start(eo));
     REQUIRE(egress.wait_playing(5s));
 
-    // A player that plays then stops reading (stalls its TCP receive).
+    // A player that plays then stops reading (stalls its TCP receive). Pin
+    // its receive buffer small (rcvbuf=4096; the kernel doubles the request
+    // and enforces a ~2304-byte floor on Linux) so the writer blocks after a
+    // few KB regardless of the host's tcp_rmem/tcp_wmem autotuning -- a CI
+    // runner with larger maxima would otherwise absorb the flood entirely
+    // and the assertion below would spuriously fail.
     RtmpPlayer player;
-    REQUIRE(player.connect_and_play(45587, "cam"));
+    REQUIRE(player.connect_and_play(45587, "cam", /*rcvbuf=*/4096));
     std::this_thread::sleep_for(200ms);
 
     // Seq header + a flood of large keyframe-ish frames. The player never
-    // reads, so its TCP window fills and the writer thread blocks; the queue
-    // fills and starts dropping — but the QUIC network thread (on_frame)
-    // keeps accepting, so this loop completes without hanging. (10000 x
-    // 4000-byte frames: smaller floods can fit entirely within the OS
-    // socket buffers on loopback without ever blocking the writer.)
+    // reads, so its (now tiny) TCP window fills and the writer thread
+    // blocks; the queue fills and starts dropping — but the QUIC network
+    // thread (on_frame) keeps accepting, so this loop completes without
+    // hanging. With the window pinned small, 1500 x 4000-byte frames is
+    // plenty to force drops deterministically and keeps the test fast.
     pub.send(to_frame(vid(0, {0x17, 0x00, 0x11}), 0),
              roqr::quic::DeliveryMode::Stream);
-    for (int i = 1; i <= 10000; ++i) {
+    for (int i = 1; i <= 1500; ++i) {
         pub.send(to_frame(vid(static_cast<uint32_t>(i * 10),
                               std::vector<uint8_t>(4000, 0x27)),
                           0),
