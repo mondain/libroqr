@@ -55,6 +55,8 @@ if(ROQR_BUILD_QUIC)
       integration/ingest_test.cpp
       integration/egress_test.cpp
       integration/client_idle_timeout_test.cpp
+      integration/egress_reconnect_test.cpp
+      integration/ingest_reconnect_test.cpp
     )
     add_dependencies(roqr-integration-tests roqr-testcerts)
     target_compile_definitions(roqr-integration-tests PRIVATE
