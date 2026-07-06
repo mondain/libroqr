@@ -139,7 +139,7 @@ network-thread callbacks — suppressing it could hide a real callback race.
 - `rtmp/` — RTMP handshake, chunking, AMF0, E-RTMP media classifier, server session/listener.
 - `gateway/` — RTMP <-> RoQR bridge, ingest/egress gateways, connection supervisor.
 - `tools/relayd/` — the RoQR reference relay (`roqr-relayd`).
-- `examples/` — `roqr-ingest`, `roqr-egress`, `roqr-duplex`, and Java samples under `examples/java/`.
+- `examples/` — `roqr-ingest`, `roqr-egress`, `roqr-duplex`, Java samples under `examples/java/`, and a Rust FFI client under `examples/rust/`.
 - `ffi/` — C ABI (`roqr.h`, `roqr_rtmp.h`) in `libroqr-ffi.so`.
 - `jni/` — JNI bindings (`org.red5.roqr`) in `libroqr-jni.so` + `roqr.jar`.
 - `tests/` — unit and integration tests.

@@ -49,6 +49,7 @@ The core protocol library builds without picoquic:
 - `jni/` JNI bindings (`org.red5.roqr`) in `libroqr-jni.so` + `roqr.jar`,
   built when `-DROQR_BUILD_JNI=ON` and a JDK is present.
 - `examples/java/` Java publish/play samples (see `examples/java/README.md`).
+- `examples/rust/` a Rust client over the C FFI (see `examples/rust/README.md`).
 - Android: see `cmake/android-jni.md` for the NDK cross-compile.
 
 Native callbacks (`MessageListener`) fire on a native thread the binding

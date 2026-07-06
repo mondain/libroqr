@@ -1,0 +1,13 @@
+[package]
+name = "roqr-client-example"
+version = "0.1.0"
+edition = "2021"
+description = "Example RoQR client built on the libroqr C FFI"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "roqr-rust-client"
+path = "src/main.rs"
+
+# No third-party dependencies: the example uses only std and the libroqr C ABI.
