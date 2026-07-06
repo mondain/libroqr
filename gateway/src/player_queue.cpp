@@ -56,4 +56,9 @@ uint64_t PlayerQueue::dropped() const {
     return dropped_;
 }
 
+void PlayerQueue::clear() {
+    std::lock_guard lock(mutex_);
+    queue_.clear();
+}
+
 }  // namespace roqr::gateway

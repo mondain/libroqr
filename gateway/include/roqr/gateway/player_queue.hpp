@@ -36,6 +36,12 @@ public:
     size_t size() const;
     uint64_t dropped() const;
 
+    // Drop all queued entries without counting them toward dropped() — used
+    // when installing a new player so stale prior-era frames don't linger
+    // ahead of the new player's init frames; this is a deliberate flush, not
+    // the loss dropped() tracks.
+    void clear();
+
 private:
     struct Entry {
         roqr::rtmp::RtmpMessage msg;

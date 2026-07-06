@@ -76,3 +76,21 @@ TEST_CASE("close unblocks a waiting consumer and drains remaining") {
     q2.close();
     consumer.join();
 }
+
+TEST_CASE("clear drops all entries without counting them as dropped") {
+    PlayerQueue q(8);
+    REQUIRE(q.push(seq_header(), PlayerQueue::Kind::Init));
+    REQUIRE(q.push(vid(1), PlayerQueue::Kind::Coded));
+    REQUIRE(q.push(vid(2), PlayerQueue::Kind::Coded));
+    CHECK(q.size() == 3);
+    CHECK(q.dropped() == 0);
+
+    q.clear();
+
+    CHECK(q.size() == 0);
+    CHECK(q.dropped() == 0);  // clear() is not a drop-tracked eviction
+
+    // Queue is still usable after clear().
+    REQUIRE(q.push(vid(3), PlayerQueue::Kind::Coded));
+    CHECK(q.pop()->timestamp == 3);
+}

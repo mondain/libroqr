@@ -158,6 +158,14 @@ bool EgressGateway::start(const EgressOptions& options) {
         [impl](roqr::rtmp::ServerSession& s) {
             {
                 std::lock_guard lock(impl->player_mutex);
+                // A previous player may still be alive (e.g. a stalled one
+                // that never disconnected): shut its fd down so any writer
+                // blocked in its send() unblocks, then drop its queued
+                // frames so the new player isn't fed stale, prior-era media
+                // ahead of its own init frames.
+                if (impl->player != nullptr && impl->player != &s)
+                    impl->player->close();
+                impl->queue.clear();
                 impl->player = &s;
                 impl->player_ready = false;
             }
