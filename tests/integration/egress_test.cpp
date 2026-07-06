@@ -142,3 +142,66 @@ TEST_CASE("egress plays a RoQR stream out to an RTMP player") {
     pub.wait_closed(5s);
     relay.stop();
 }
+
+TEST_CASE("a stalled player does not wedge the egress QUIC thread") {
+    roqr::relayd::Server relay;
+    roqr::relayd::ServerOptions ro;
+    ro.port = 45586;
+    ro.cert_file = kCertDir + "/cert.pem";
+    ro.key_file = kCertDir + "/key.pem";
+    ro.mode = roqr::relayd::Mode::Media;
+    REQUIRE(relay.start(ro));
+
+    roqr::quic::Client pub;
+    REQUIRE(pub.connect("127.0.0.1", 45586));
+    REQUIRE(pub.wait_connected(5s));
+    pub.send(to_frame(roqr::gateway::build_connect(1, "live", "rtmp://h"), 0),
+             roqr::quic::DeliveryMode::Stream);
+    pub.send(to_frame(roqr::gateway::build_create_stream(2), 0),
+             roqr::quic::DeliveryMode::Stream);
+    pub.send(to_frame(roqr::gateway::build_publish(3, "cam"), 0),
+             roqr::quic::DeliveryMode::Stream);
+    std::this_thread::sleep_for(200ms);
+
+    roqr::gateway::EgressGateway egress;
+    roqr::gateway::EgressOptions eo;
+    eo.rtmp_port = 45587;
+    eo.roqr_host = "127.0.0.1";
+    eo.roqr_port = 45586;
+    eo.stream_name = "cam";
+    REQUIRE(egress.start(eo));
+    REQUIRE(egress.wait_playing(5s));
+
+    // A player that plays then stops reading (stalls its TCP receive).
+    RtmpPlayer player;
+    REQUIRE(player.connect_and_play(45587, "cam"));
+    std::this_thread::sleep_for(200ms);
+
+    // Seq header + a flood of large keyframe-ish frames. The player never
+    // reads, so its TCP window fills and the writer thread blocks; the queue
+    // fills and starts dropping — but the QUIC network thread (on_frame)
+    // keeps accepting, so this loop completes without hanging. (10000 x
+    // 4000-byte frames: smaller floods can fit entirely within the OS
+    // socket buffers on loopback without ever blocking the writer.)
+    pub.send(to_frame(vid(0, {0x17, 0x00, 0x11}), 0),
+             roqr::quic::DeliveryMode::Stream);
+    for (int i = 1; i <= 10000; ++i) {
+        pub.send(to_frame(vid(static_cast<uint32_t>(i * 10),
+                              std::vector<uint8_t>(4000, 0x27)),
+                          0),
+                 roqr::quic::DeliveryMode::Stream);
+    }
+
+    // Give the pipeline time to fill and drop. Bounded — must not hang.
+    auto deadline = std::chrono::steady_clock::now() + 5s;
+    while (egress.frames_dropped() == 0 &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(50ms);
+    }
+    CHECK(egress.frames_dropped() > 0);  // stale media dropped, thread alive
+
+    egress.stop();
+    pub.close();
+    pub.wait_closed(5s);
+    relay.stop();
+}
