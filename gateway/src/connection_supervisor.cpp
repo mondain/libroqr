@@ -95,6 +95,15 @@ struct ConnectionSupervisor::Impl {
                 std::lock_guard<std::mutex> lock(mutex);
                 client = std::move(c);
                 cur = client.get();
+                // stop() may have run between the top-of-loop stopping check
+                // and this publish (e.g. while connect() was in flight), and
+                // found client == nullptr, so it couldn't close() anything.
+                // Re-check under the same lock stop() uses: whichever of
+                // stop()/publish runs second sees the other's state, so
+                // close() is always invoked on the published client if
+                // stopping was ever set. close() is non-blocking (just sets
+                // a flag and wakes the network thread), so it's safe here.
+                if (stopping) cur->close();
             }
 
             const bool up = cur->wait_connected(policy.connect_timeout);

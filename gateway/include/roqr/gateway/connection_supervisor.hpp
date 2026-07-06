@@ -26,7 +26,9 @@ public:
     // on_ready(Client&): invoked on the supervisor thread each time a fresh
     //   connection is confirmed up — send the session handshake here
     //   (connect/createStream/publish|play). Must not block (same rule as any
-    //   Client handler).
+    //   Client handler). Must not throw: an exception escaping the supervisor
+    //   thread (or the network-thread callback for on_message) calls
+    //   std::terminate.
     // on_message: wired as each Client's message handler.
     using ReadyHandler = std::function<void(roqr::quic::Client&)>;
     using MessageHandler = roqr::quic::Client::MessageHandler;
